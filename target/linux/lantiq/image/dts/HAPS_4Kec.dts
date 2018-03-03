@@ -1,0 +1,15 @@
+/dts-v1/;
+
+/include/ "HAPS.dtsi"
+
+/ {
+        model = "HAPS Platform";
+
+	chosen {
+		bootargs-append = "console=ttyLTQ0,115200n8r mem=16M root=/dev/ram rw init=/etc/preinit loglevel=8 initcall_debug=1 shell";
+        };
+
+	memory@0 {
+		reg = <0x20000000 0x1000000>;
+	};
+};

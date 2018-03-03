@@ -1,0 +1,82 @@
+From d28a8a041bc72147d10138440543185f9154fb4d Mon Sep 17 00:00:00 2001
+From: Steven Yu-Yu Hung <steven.hung@wnc.com.tw>
+Date: Mon, 15 Jul 2013 10:58:58 +0800
+Subject: [PATCH] JNRP
+
+---
+ Makefile.am  | 22 ++++++++++++++--------
+ sqlite3.c    |  9 ++++++++-
+ sqlite3ext.h |  1 +
+ 3 files changed, 23 insertions(+), 9 deletions(-)
+
+diff --git a/Makefile.am b/Makefile.am
+index 3931d83..e1af07c 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -1,16 +1,22 @@
+ 
+ AM_CFLAGS = @THREADSAFE_FLAGS@ @DYNAMIC_EXTENSION_FLAGS@ -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_RTREE
+ 
+-lib_LTLIBRARIES = libsqlite3.la
+-libsqlite3_la_SOURCES = sqlite3.c
+-libsqlite3_la_LDFLAGS = -no-undefined -version-info 8:6:8
++lib_LTLIBRARIES = libsqlite3e.la
++libsqlite3e_la_SOURCES = sqlite3.c sqliteWNCLib.c
++libsqlite3e_la_LDFLAGS = -no-undefined -version-info 8:6:8
+ 
+-bin_PROGRAMS = sqlite3
+-sqlite3_SOURCES = shell.c sqlite3.h
+-sqlite3_LDADD = $(top_builddir)/libsqlite3.la @READLINE_LIBS@
+-sqlite3_DEPENDENCIES = $(top_builddir)/libsqlite3.la
++bin_PROGRAMS = sqlite3e sqlplus
++sqlite3e_SOURCES = shell.c sqlite3.h sqliteWNCLib.h
++sqlite3e_LDADD = $(top_builddir)/libsqlite3e.la @READLINE_LIBS@ -ladaptos -lumi -lrt
++sqlite3e_DEPENDENCIES = $(top_builddir)/libsqlite3e.la
++sqlite3e_CFLAGS = $(AM_CFLAGS)
+ 
+-include_HEADERS = sqlite3.h sqlite3ext.h
++sqlplus_SOURCES = sqlplus.c sqlite3.h sqliteWNCLib.h
++sqlplus_LDADD = $(top_builddir)/libsqlite3e.la @READLINE_LIBS@ -ladaptos -lumi -lrt
++sqlplus_DEPENDENCIES = $(top_builddir)/libsqlite3e.la
++sqlplus_CFLAGS = $(AM_CFLAGS)
++
++include_HEADERS = sqlite3.h sqlite3ext.h sqliteWNCLib.h
+ 
+ EXTRA_DIST = sqlite3.pc sqlite3.1 tea
+ pkgconfigdir = ${libdir}/pkgconfig
+diff --git a/sqlite3.c b/sqlite3.c
+index f69816e..58cc271 100644
+--- a/sqlite3.c
++++ b/sqlite3.c
+@@ -115982,8 +115982,15 @@ SQLITE_API int sqlite3_open(
+   const char *zFilename, 
+   sqlite3 **ppDb 
+ ){
+-  return openDatabase(zFilename, ppDb,
++  int status = SQLITE_ERROR;
++  extern int sqliteMgmtInit (const char * fileName, sqlite3 * pDb);
++
++  status = openDatabase(zFilename, ppDb,
+                       SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0);
++  if (status == SQLITE_OK)
++    status = sqliteMgmtInit (zFilename, *ppDb);
++
++  return status;
+ }
+ SQLITE_API int sqlite3_open_v2(
+   const char *filename,   /* Database filename (UTF-8) */
+diff --git a/sqlite3ext.h b/sqlite3ext.h
+index 5abcde2..ad84a13 100644
+--- a/sqlite3ext.h
++++ b/sqlite3ext.h
+@@ -19,6 +19,7 @@
+ #define _SQLITE3EXT_H_
+ #include "sqlite3.h"
+ 
++#include "sqliteWNCLib.h"
+ typedef struct sqlite3_api_routines sqlite3_api_routines;
+ 
+ /*
+-- 
+1.8.2
+

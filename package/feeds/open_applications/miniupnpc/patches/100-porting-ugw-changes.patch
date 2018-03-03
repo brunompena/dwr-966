@@ -1,0 +1,546 @@
+Index: miniupnpc-1.6.20120509/miniupnpc.c
+===================================================================
+--- miniupnpc-1.6.20120509.orig/miniupnpc.c	2012-04-12 18:23:56.000000000 +0530
++++ miniupnpc-1.6.20120509/miniupnpc.c	2014-05-15 12:53:50.000000000 +0530
+@@ -24,6 +24,7 @@
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <string.h>
++#include <sys/ioctl.h>
+ #ifdef _WIN32
+ /* Win32 Specific includes and defines */
+ #include <winsock2.h>
+@@ -89,6 +90,27 @@
+ #define SERVICEPREFIX "u"
+ #define SERVICEPREFIX2 'u'
+ 
++/*#include <sys/socket.h>*/
++ #define IFNAMSIZ 16 
++struct ifreq {
++               char ifr_name[IFNAMSIZ]; /* Interface name */
++               union {
++                   struct sockaddr ifr_addr;
++                   struct sockaddr ifr_dstaddr;
++                   struct sockaddr ifr_broadaddr;
++                   struct sockaddr ifr_netmask;
++                   struct sockaddr ifr_hwaddr;
++                   short           ifr_flags;
++                   int             ifr_ifindex;
++                   int             ifr_metric;
++                   int             ifr_mtu;
++                   char            ifr_slave[IFNAMSIZ];
++                   char            ifr_newname[IFNAMSIZ];
++                   char           *ifr_data;
++               };
++           };
++
++#ifdef NOTREQUIRED
+ /* root description parsing */
+ LIBSPEC void parserootdesc(const char * buffer, int bufsize, struct IGDdatas * data)
+ {
+@@ -106,6 +128,7 @@
+ 	printIGD(data);
+ #endif
+ }
++#endif
+ 
+ /* simpleUPnPcommand2 :
+  * not so simple !
+@@ -339,10 +362,10 @@
+ #if 0
+ 		"urn:schemas-upnp-org:device:InternetGatewayDevice:2",
+ 		"urn:schemas-upnp-org:service:WANIPConnection:2",
+-#endif
+ 		"urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+ 		"urn:schemas-upnp-org:service:WANIPConnection:1",
+ 		"urn:schemas-upnp-org:service:WANPPPConnection:1",
++#endif
+ 		"upnp:rootdevice",
+ 		0
+ 	};
+@@ -393,6 +416,9 @@
+ 		if(error)
+ 			*error = UPNPDISCOVER_SOCKET_ERROR;
+ 		PRINT_SOCKET_ERROR("socket");
++		if (devlist != NULL){
++		freeUPNPDevlist(devlist);			/*ramesh memleak*/	
++		}
+ 		return NULL;
+ 	}
+ 	/* reception */
+@@ -479,6 +505,7 @@
+ 		if(error)
+ 			*error = UPNPDISCOVER_SOCKET_ERROR;
+ 		PRINT_SOCKET_ERROR("setsockopt");
++		 freeUPNPDevlist(devlist);                       /*ramesh memleak*/
+ 		return NULL;
+ 	}
+ 
+@@ -501,29 +528,19 @@
+ #endif
+ 		} else {
+ 			struct in_addr mc_if;
+-			mc_if.s_addr = inet_addr(multicastif); /* ex: 192.168.x.x */
+-			if(mc_if.s_addr != INADDR_NONE)
+-			{
++			struct ifreq ifr;
++
++			memset(&ifr, 0, sizeof(struct ifreq));
++			strcpy(ifr.ifr_name, multicastif);
++			ifr.ifr_addr.sa_family = AF_INET;
++
++			if (ioctl(sudp, SIOCGIFADDR, &ifr) >= 0) {
++				mc_if.s_addr = ((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr.s_addr;
+ 				((struct sockaddr_in *)&sockudp_r)->sin_addr.s_addr = mc_if.s_addr;
+ 				if(setsockopt(sudp, IPPROTO_IP, IP_MULTICAST_IF, (const char *)&mc_if, sizeof(mc_if)) < 0)
+ 				{
+ 					PRINT_SOCKET_ERROR("setsockopt");
+ 				}
+-			} else {
+-#ifdef HAS_IP_MREQN
+-				/* was not an ip address, try with an interface name */
+-				struct ip_mreqn reqn;	/* only defined with -D_BSD_SOURCE or -D_GNU_SOURCE */
+-				memset(&reqn, 0, sizeof(struct ip_mreqn));
+-				reqn.imr_ifindex = if_nametoindex(multicastif);
+-				if(setsockopt(sudp, IPPROTO_IP, IP_MULTICAST_IF, (const char *)&reqn, sizeof(reqn)) < 0)
+-				{
+-					PRINT_SOCKET_ERROR("setsockopt");
+-				}
+-#else
+-#ifdef DEBUG
+-				printf("Setting of multicast interface not supported with interface name.\n");
+-#endif
+-#endif
+ 			}
+ 		}
+ 	}
+@@ -536,13 +553,14 @@
+ 			*error = UPNPDISCOVER_SOCKET_ERROR;
+         PRINT_SOCKET_ERROR("bind");
+ 		closesocket(sudp);
++		 freeUPNPDevlist(devlist);                       /*ramesh memleak*/
+ 		return NULL;
+     }
+ 
+ 	if(error)
+ 		*error = UPNPDISCOVER_SUCCESS;
+ 	/* Calculating maximum response time in seconds */
+-	mx = ((unsigned int)delay) / 1000u;
++	mx = ((unsigned int)delay) / 1000000u;
+ 	/* receiving SSDP response packet */
+ 	for(n = 0; deviceList[deviceIndex]; deviceIndex++)
+ 	{
+@@ -625,7 +643,11 @@
+ #endif /* #ifdef NO_GETADDRINFO */
+ 	}
+ 	/* Waiting for SSDP REPLY packet to M-SEARCH */
+-	n = receivedata(sudp, bufr, sizeof(bufr), delay);
++	do {
++	n = receivedata(sudp, bufr, sizeof(bufr), &delay);
++#ifdef DEBUG
++    	printf("TIME LEFT : %d\n", delay);
++#endif
+ 	if (n < 0) {
+ 		/* error */
+ 		if(error)
+@@ -688,6 +710,7 @@
+ 			devlist = tmp;
+ 		}
+ 	}
++	} while (delay > 0);
+ 	}
+ 	closesocket(sudp);
+ 	return devlist;
+@@ -706,6 +729,7 @@
+ 	}
+ }
+ 
++#ifdef NOTREQUIRED
+ static void
+ url_cpy_or_cat(char * dst, const char * src, int n)
+ {
+@@ -820,6 +844,11 @@
+ 		return 0;
+ }
+ 
++LIBSPEC int UPNP_GetFriendlyNames(struct UPNPDev * devlist, 
++                                  struct FriendlyNames *fnames, 
++                                  char *lanaddr, int lanaddrlen)
++{
++}
+ 
+ /* UPNP_GetValidIGD() :
+  * return values :
+@@ -840,13 +869,10 @@
+ 				 struct IGDdatas * data,
+ 				 char * lanaddr, int lanaddrlen)
+ {
+-	struct xml_desc {
+-		char * xml;
+-		int size;
+-	} * desc = NULL;
++	char * descXML;
++	int descXMLsize = 0;
+ 	struct UPNPDev * dev;
+ 	int ndev = 0;
+-	int i;
+ 	int state = -1; /* state 1 : IGD connected. State 2 : IGD. State 3 : anything */
+ 	if(!devlist)
+ 	{
+@@ -855,36 +881,22 @@
+ #endif
+ 		return 0;
+ 	}
+-	for(dev = devlist; dev; dev = dev->pNext)
+-		ndev++;
+-	if(ndev > 0)
+-	{
+-		desc = calloc(ndev, sizeof(struct xml_desc));
+-		if(!desc)
+-			return -1; /* memory allocation error */
+-	}
+ 	for(state = 1; state <= 3; state++)
+ 	{
+-		for(dev = devlist, i = 0; dev; dev = dev->pNext, i++)
++		for(dev = devlist; dev; dev = dev->pNext)
+ 		{
+ 			/* we should choose an internet gateway device.
+ 		 	* with st == urn:schemas-upnp-org:device:InternetGatewayDevice:1 */
+-			if(state == 1)
+-			{
+-				desc[i].xml = miniwget_getaddr(dev->descURL, &(desc[i].size),
+-				   	                           lanaddr, lanaddrlen);
+-#ifdef DEBUG
+-				if(!desc[i].xml)
+-				{
+-					printf("error getting XML description %s\n", dev->descURL);
+-				}
+-#endif
+-			}
+-			if(desc[i].xml)
++			descXML = miniwget_getaddr(dev->descURL, &descXMLsize,
++			   	                        lanaddr, lanaddrlen);
++			if(descXML)
+ 			{
++				ndev++;
+ 				memset(data, 0, sizeof(struct IGDdatas));
+ 				memset(urls, 0, sizeof(struct UPNPUrls));
+-				parserootdesc(desc[i].xml, desc[i].size, data);
++				parserootdesc(descXML, descXMLsize, data);
++				free(descXML);
++				descXML = NULL;
+ 				if(0==strcmp(data->CIF.servicetype,
+ 				   "urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1")
+ 				   || state >= 3 )
+@@ -897,7 +909,7 @@
+ 			         UPNPIGD_IsConnected(urls, data));
+ #endif
+ 				  if((state >= 2) || UPNPIGD_IsConnected(urls, data))
+-					goto free_and_return;
++					return state;
+ 				  FreeUPNPUrls(urls);
+ 				  if(data->second.servicetype[0] != '\0') {
+ #ifdef DEBUG
+@@ -915,18 +927,21 @@
+ 			           UPNPIGD_IsConnected(urls, data));
+ #endif
+ 				    if((state >= 2) || UPNPIGD_IsConnected(urls, data))
+-					  goto free_and_return;
++					  return state;
+ 				    FreeUPNPUrls(urls);
+ 				  }
+ 				}
+ 				memset(data, 0, sizeof(struct IGDdatas));
+ 			}
++#ifdef DEBUG
++			else
++			{
++				printf("error getting XML description %s\n", dev->descURL);
++			}
++#endif
+ 		}
+ 	}
+-	state = 0;
+-free_and_return:
+-	free(desc);
+-	return state;
++	return 0;
+ }
+ 
+ /* UPNP_GetIGDFromUrl()
+@@ -956,4 +971,4 @@
+ 		return 0;
+ 	}
+ }
+-
++#endif
+Index: miniupnpc-1.6.20120509/receivedata.h
+===================================================================
+--- miniupnpc-1.6.20120509.orig/receivedata.h	2012-03-06 02:07:12.000000000 +0530
++++ miniupnpc-1.6.20120509/receivedata.h	2014-05-15 12:58:26.000000000 +0530
+@@ -11,7 +11,7 @@
+ /* Reads data from the specified socket.
+  * Returns the number of bytes read if successful, zero if no bytes were
+  * read or if we timed out. Returns negative if there was an error. */
+-int receivedata(int socket, char * data, int length, int timeout);
++int receivedata(int socket, char * data, int length, int *timeout);
+ 
+ #endif
+ 
+Index: miniupnpc-1.6.20120509/igd_desc_parse.c
+===================================================================
+--- miniupnpc-1.6.20120509.orig/igd_desc_parse.c	2011-04-11 14:49:37.000000000 +0530
++++ miniupnpc-1.6.20120509/igd_desc_parse.c	2014-05-15 13:25:08.000000000 +0530
+@@ -6,6 +6,8 @@
+  * This software is subject to the conditions detailed in the
+  * LICENCE file provided in this distribution. */
+ 
++#ifdef NOTREQUIRED
++
+ #include "igd_desc_parse.h"
+ #include <stdio.h>
+ #include <string.h>
+@@ -121,5 +123,5 @@
+ 	printf(" eventSubURL = '%s'\n", d->IPv6FC.eventsuburl);
+ 	printf(" SCPDURL = '%s'\n", d->IPv6FC.scpdurl);
+ }
+-
++#endif
+ 
+Index: miniupnpc-1.6.20120509/igd_desc_parse.h
+===================================================================
+--- miniupnpc-1.6.20120509.orig/igd_desc_parse.h	2011-04-11 14:49:37.000000000 +0530
++++ miniupnpc-1.6.20120509/igd_desc_parse.h	2014-05-15 13:04:01.000000000 +0530
+@@ -20,6 +20,19 @@
+ 	/*char devicetype[MINIUPNPC_URL_MAXSIZE];*/
+ };
+ 
++struct XMLTag {
++	char TagName[MINIUPNPC_URL_MAXSIZE];
++	char TagVal[MINIUPNPC_URL_MAXSIZE];
++};
++
++struct XmlElement {
++	int level;
++	int tlevel;
++	char tTagName[MINIUPNPC_URL_MAXSIZE];
++	char XmlElementData[MINIUPNPC_URL_MAXSIZE];
++	struct XMLTag tmp;
++};
++
+ struct IGDdatas {
+ 	char cureltname[MINIUPNPC_URL_MAXSIZE];
+ 	char urlbase[MINIUPNPC_URL_MAXSIZE];
+Index: miniupnpc-1.6.20120509/miniwget.c
+===================================================================
+--- miniupnpc-1.6.20120509.orig/miniwget.c	2012-05-02 01:41:49.000000000 +0530
++++ miniupnpc-1.6.20120509/miniwget.c	2014-05-15 13:18:56.000000000 +0530
+@@ -76,13 +76,14 @@
+ 	unsigned int content_buf_used = 0;
+ 	char chunksize_buf[32];
+ 	unsigned int chunksize_buf_index;
++	int recvtout = 5000000;
+ 
+ 	header_buf = malloc(header_buf_len);
+ 	content_buf = malloc(content_buf_len);
+ 	chunksize_buf[0] = '\0';
+ 	chunksize_buf_index = 0;
+ 
+-	while((n = receivedata(s, buf, 2048, 5000)) > 0)
++	while((n = receivedata(s, buf, 2048, &recvtout)) > 0)
+ 	{
+ 		if(endofheaders == 0)
+ 		{
+@@ -286,7 +287,7 @@
+  * do all the work.
+  * Return NULL if something failed. */
+ static void *
+-miniwget3(const char * host,
++miniwget3(const char * url, const char * host,
+           unsigned short port, const char * path,
+           int * size, char * addr_str, int addr_str_len,
+           const char * httpversion)
+@@ -390,22 +391,22 @@
+ /* miniwget2() :
+  * Call miniwget3(); retry with HTTP/1.1 if 1.0 fails. */
+ static void *
+-miniwget2(const char * host,
++miniwget2(const char * url, const char * host,
+ 		  unsigned short port, const char * path,
+ 		  int * size, char * addr_str, int addr_str_len)
+ {
+ 	char * respbuffer;
+ 
+-	respbuffer = miniwget3(host, port, path, size, addr_str, addr_str_len, "1.1");
++	respbuffer = miniwget3(url, host, port, path, size, addr_str, addr_str_len, "1.1");
+ /*
+-	respbuffer = miniwget3(host, port, path, size, addr_str, addr_str_len, "1.0");
++	respbuffer = miniwget3(url, host, port, path, size, addr_str, addr_str_len, "1.0");
+ 	if (*size == 0)
+ 	{
+ #ifdef DEBUG
+ 		printf("Retrying with HTTP/1.1\n");
+ #endif
+ 		free(respbuffer);
+-		respbuffer = miniwget3(host, port, path, size, addr_str, addr_str_len, "1.1");
++		respbuffer = miniwget3(url, host, port, path, size, addr_str, addr_str_len, "1.1");
+ 	}
+ */
+ 	return respbuffer;
+@@ -502,9 +503,10 @@
+ #ifdef DEBUG
+ 	printf("parsed url : hostname='%s' port=%hu path='%s'\n", hostname, port, path);
+ #endif
+-	return miniwget2(hostname, port, path, size, 0, 0);
++	return miniwget2(url, hostname, port, path, size, 0, 0);
+ }
+ 
++#ifdef NOTREQUIRED
+ void * miniwget_getaddr(const char * url, int * size, char * addr, int addrlen)
+ {
+ 	unsigned short port;
+@@ -519,6 +521,6 @@
+ #ifdef DEBUG
+ 	printf("parsed url : hostname='%s' port=%hu path='%s'\n", hostname, port, path);
+ #endif
+-	return miniwget2(hostname, port, path, size, addr, addrlen);
++	return miniwget2(url, hostname, port, path, size, addr, addrlen);
+ }
+-
++#endif
+Index: miniupnpc-1.6.20120509/receivedata.c
+===================================================================
+--- miniupnpc-1.6.20120509.orig/receivedata.c	2012-03-06 02:07:12.000000000 +0530
++++ miniupnpc-1.6.20120509/receivedata.c	2014-05-15 13:03:29.000000000 +0530
+@@ -34,10 +34,11 @@
+ #include "receivedata.h"
+ 
+ int
+-receivedata(int socket, char * data, int length, int timeout)
++receivedata(int socket, char * data, int length, int *timeout)
+ {
+     int n;
+-#if !defined(_WIN32) && !defined(__amigaos__) && !defined(__amigaos4__)
++//#if !defined(WIN32) && !defined(__amigaos__) && !defined(__amigaos4__)
++#if 0
+ 	/* using poll */
+     struct pollfd fds[1]; /* for the poll */
+ #ifdef MINIUPNPC_IGNORE_EINTR
+@@ -56,21 +57,24 @@
+ 		/* timeout */
+         return 0;
+     }
+-#else /* !defined(_WIN32) && !defined(__amigaos__) && !defined(__amigaos4__) */
+-	/* using select under _WIN32 and amigaos */
++#else /* !defined(WIN32) && !defined(__amigaos__) && !defined(__amigaos4__) */
++	/* using select under WIN32 and amigaos */
+     fd_set socketSet;
+-    TIMEVAL timeval;
++    struct timeval timeval;
+     FD_ZERO(&socketSet);
+     FD_SET(socket, &socketSet);
+-    timeval.tv_sec = timeout / 1000;
+-    timeval.tv_usec = (timeout % 1000) * 1000;
++    timeval.tv_sec = (*timeout) / 1000000;
++    timeval.tv_usec = ((*timeout) % 1000000);
+     n = select(FD_SETSIZE, &socketSet, NULL, NULL, &timeval);
+     if(n < 0) {
+         PRINT_SOCKET_ERROR("select");
++	*timeout = 0;
+         return -1;
+     } else if(n == 0) {
++	*timeout = 0;
+         return 0;
+     }
++    *timeout = timeval.tv_sec * 1000000 + timeval.tv_usec;
+ #endif
+ 	n = recv(socket, data, length, 0);
+ 	if(n<0) {
+Index: miniupnpc-1.6.20120509/upnpcommands.c
+===================================================================
+--- miniupnpc-1.6.20120509.orig/upnpcommands.c	2012-04-10 04:09:43.000000000 +0530
++++ miniupnpc-1.6.20120509/upnpcommands.c	2014-05-15 13:22:00.000000000 +0530
+@@ -825,9 +825,13 @@
+ 	buffer = simpleUPnPcommand(-1, controlURL, servicetype,
+ 	                           "GetOutboundPinholeTimeout", GetOutboundPinholeTimeoutArgs, &bufsize);
+ 	if(!buffer)
++        {
++		free(GetOutboundPinholeTimeoutArgs);
+ 		return UPNPCOMMAND_HTTP_ERROR;
++	}
+ 	ParseNameValue(buffer, bufsize, &pdata);
+-	free(buffer); buffer = NULL;
++	free(buffer); 
++	buffer = NULL;
+ 	resVal = GetValueFromNameValueList(&pdata, "errorCode");
+ 	if(resVal)
+ 	{
+@@ -900,7 +904,10 @@
+ 	buffer = simpleUPnPcommand(-1, controlURL, servicetype,
+ 	                           "AddPinhole", AddPinholeArgs, &bufsize);
+ 	if(!buffer)
++        {
++	        free(AddPinholeArgs);
+ 		return UPNPCOMMAND_HTTP_ERROR;
++        }
+ 	ParseNameValue(buffer, bufsize, &pdata);
+ 	free(buffer); buffer = NULL;
+ 	p = GetValueFromNameValueList(&pdata, "UniqueID");
+@@ -948,7 +955,10 @@
+ 	buffer = simpleUPnPcommand(-1, controlURL, servicetype,
+ 	                           "UpdatePinhole", UpdatePinholeArgs, &bufsize);
+ 	if(!buffer)
++        {
++	        free(UpdatePinholeArgs);
+ 		return UPNPCOMMAND_HTTP_ERROR;
++        }
+ 	ParseNameValue(buffer, bufsize, &pdata);
+ 	free(buffer); buffer = NULL;
+ 	resVal = GetValueFromNameValueList(&pdata, "errorCode");
+@@ -987,7 +997,10 @@
+ 	buffer = simpleUPnPcommand(-1, controlURL, servicetype,
+ 	                           "DeletePinhole", DeletePinholeArgs, &bufsize);
+ 	if(!buffer)
++        {
++                free(DeletePinholeArgs);
+ 		return UPNPCOMMAND_HTTP_ERROR;
++        }
+ 	/*DisplayNameValueList(buffer, bufsize);*/
+ 	ParseNameValue(buffer, bufsize, &pdata);
+ 	free(buffer); buffer = NULL;
+@@ -1026,7 +1039,10 @@
+ 	buffer = simpleUPnPcommand(-1, controlURL, servicetype,
+ 	                           "CheckPinholeWorking", CheckPinholeWorkingArgs, &bufsize);
+ 	if(!buffer)
++        {
++	        free(CheckPinholeWorkingArgs);
+ 		return UPNPCOMMAND_HTTP_ERROR;
++        }
+ 	ParseNameValue(buffer, bufsize, &pdata);
+ 	free(buffer); buffer = NULL;
+ 
+@@ -1071,7 +1087,10 @@
+ 	buffer = simpleUPnPcommand(-1, controlURL, servicetype,
+ 	                           "GetPinholePackets", GetPinholePacketsArgs, &bufsize);
+ 	if(!buffer)
++        {
++                free(GetPinholePacketsArgs);
+ 		return UPNPCOMMAND_HTTP_ERROR;
++        }
+ 	ParseNameValue(buffer, bufsize, &pdata);
+ 	free(buffer); buffer = NULL;
+ 
+Index: miniupnpc-1.6.20120509/upnperrors.c
+===================================================================
+--- miniupnpc-1.6.20120509.orig/upnperrors.c	2012-03-20 22:15:14.000000000 +0530
++++ miniupnpc-1.6.20120509/upnperrors.c	2014-05-15 13:23:03.000000000 +0530
+@@ -97,8 +97,7 @@
+ 		s = "ExternalPortOnlySupportsWildcard";
+ 		break;
+ 	default:
+-		s = "UnknownError";
+-		break;
++		s = NULL;
+ 	}
+ 	return s;
+ }

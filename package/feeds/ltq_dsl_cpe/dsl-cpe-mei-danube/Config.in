@@ -1,0 +1,54 @@
+menu "Configuration"
+	depends on PACKAGE_dsl-cpe-mei-danube
+
+	choice
+		prompt "build model"
+		default dsl-cpe-mei-danube_MODEL_DEFAULT
+		help
+		  Selection of a model (predefined combination of configure options).
+
+	config dsl-cpe-mei-danube_MODEL_DEFAULT
+		bool "Default"
+		help
+		  Default features included, no debug support.
+
+	config dsl-cpe-mei-danube_MODEL_DEBUG
+		bool "Debug"
+		help
+		  Defined to enable debug support within the driver.
+	endchoice
+
+	menu "debug options"
+		depends on dsl-cpe-mei-danube_MODEL_DEBUG
+	config dsl-cpe-mei-danube_DBG_BAR_MEMORY_CHECK
+		depends on dsl-cpe-mei-danube_MODEL_DEBUG
+		bool "Include CRC check of BAR register memory blocks"
+		default n
+		help
+		  Defines to enable/disable the debug handling that periodically checks the CRC of the
+		  BAR memory blocks (64k) that has been allocated for storing the DSL Firmware binary.
+		  Initial CRC's will be calculated and printed to the console. Periodical checks will
+		  only print something to the console in case of a changed CRC.
+	endmenu
+
+	config dsl-cpe-mei-danube_USE_KERNEL_BUILD_IN
+		bool "use kernel build-in"
+		default n
+
+	menu "optional build options"
+		depends on PACKAGE_dsl-cpe-mei-danube
+	config dsl-cpe-mei-danube_USE_ADDITIONAL_BUILD_OPTIONS
+		depends on PACKAGE_dsl-cpe-mei-danube
+		bool "Use additional build options"
+		default n
+		help
+		  Provides the possibility to include/exclude single features directly.
+		  This configuration overwrites selections which are done by the "build model" configuration.
+
+	config dsl-cpe-mei-danube_ADDITIONAL_BUILD_OPTIONS
+		depends on dsl-cpe-mei-danube_USE_ADDITIONAL_BUILD_OPTIONS
+		string "Additional build options"
+		help
+		  Defines to include/exclude single feature using available configure options.
+	endmenu
+endmenu

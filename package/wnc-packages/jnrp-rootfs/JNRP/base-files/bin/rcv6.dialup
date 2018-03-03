@@ -1,0 +1,93 @@
+#! /bin/sh
+
+LOCK_FILE=/tmp/rcv6dialup_lock_$1
+if [ -e $LOCK_FILE ]; then
+    echo "v6dialup is running!"
+	return
+else
+	echo "1" > $LOCK_FILE
+fi
+
+if [ "$1" = "usb0" ] ; then
+	enable_ipv6=`cat /sysconfig/ipv6-cfg | grep IPV6_ENABLE | cut -d= -f2`
+	if [ "${enable_ipv6}" = "off" ]; then
+		sed -i 's/IPV6_ENABLE=off/IPV6_ENABLE=on/g' /sysconfig/ipv6-cfg
+	fi
+
+	# LTE iface up
+	ifconfig $1 up
+
+	WAN_INFO_FILE=/tmp/$1_wanv6.result
+	WAN_INFO_STATUS=""
+	
+	echo 0 > /proc/sys/net/ipv6/conf/all/disable_ipv6		
+	echo 2 > /proc/sys/net/ipv6/conf/all/accept_dad
+	echo 2 > /proc/sys/net/ipv6/conf/all/dad_transmits
+	echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
+	
+	# for draft-ietf-v6ops-64share-09
+	echo 0 > /proc/sys/net/ipv6/conf/$1/accept_ra
+
+	while [ "$WAN_INFO_STATUS" = "" ]; do
+		rm -f $WAN_INFO_FILE
+		rdisc6 $1 > $WAN_INFO_FILE
+		sleep 3
+		WAN_INFO_STATUS=`grep Prefix $WAN_INFO_FILE` 
+	done
+	echo "rdisc6 result:" >> /var/log/messages
+	cat $WAN_INFO_FILE >> /var/log/messages
+	
+	ip -6 addr flush dev $1 scope global
+	ip -6 addr flush dev br0 scope global
+	ip -6 route flush dev $1
+	#ip -6 route flush dev br0
+
+	WAN_IPV6ADDR=`lte_get --ip-status | grep "IPv6 address" | sed 's/^.*IPv6 address://g' | sed 's/\/.*$//g'`
+	
+	pltime=`grep "Pref. time" $WAN_INFO_FILE | sed 's/^.* : //g' | sed 's/ (.*$//g' | sed -n '1p'`
+	vltime=`grep "Valid time" $WAN_INFO_FILE | sed 's/^.* : //g' | sed 's/ (.*$//g' | sed -n '1p'`
+	pdprefix=`grep "Prefix" $WAN_INFO_FILE | sed 's/^.* : //g' | sed 's/::\/.*$/::/g' | sed -n '1p'`
+	pdlen=`grep 'Prefix' $WAN_INFO_FILE | sed 's/^.*::\///g' | sed -n '1p'`
+	pltime=`echo $pltime | sed 's/ //g'`
+	vltime=`echo $vltime | sed 's/ //g'`
+	
+	# AdvPreferredLifetime seconds|infinity 
+	if [ "$pltime" = "infinite" ] ; then
+		pltime="infinity"
+	fi
+	if [ "$vltime" = "infinite" ] ; then
+		vltime="infinity"
+	fi
+	
+	#echo "prefix pltime $pltime" > /tmp/dhcppd_result
+	#echo "prefix vltime $vltime" >> /tmp/dhcppd_result
+	echo "prefix pltime 30" > /tmp/dhcppd_result
+	echo "prefix vltime 7200" >> /tmp/dhcppd_result	
+	echo "prefix addr $pdprefix" >> /tmp/dhcppd_result
+	#echo "prefix plen $pdlen" >> /tmp/dhcppd_result
+	echo "prefix plen 64" >> /tmp/dhcppd_result
+	
+	#br0_linklocal=`ifconfig br0 | grep Scope:Link | sed 's/\/.*$//g' | sed 's/^.*:://g'`
+	if [ "$pdlen" -lt "64" ] ; then
+		ip -6 addr add $WAN_IPV6ADDR/$pdlen dev $1
+	else
+		ip -6 addr add $WAN_IPV6ADDR/128 dev $1
+	fi
+	#ip -6 addr add $pdprefix$br0_linklocal/64 dev br0
+	ip -6 addr add $pdprefix/64 dev br0
+	#ip -6 route add $pdprefix/64 dev br0
+	ip -6 route add ::/0 dev $1
+	
+	/usr/local/bin/ipv6_service.sh restart &
+	
+	adv_dns $1
+	
+    if [ "$2" = 6 ]; then
+		#/usr/local/bin/clatd.sh restart $1 $WAN_IPV6ADDR
+		if [ "$1" = "usb0" ] ; then
+			[ -e /usr/local/bin/ntp.sh ] && ntp.sh
+		fi
+    fi
+fi
+
+rm -f $LOCK_FILE

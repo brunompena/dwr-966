@@ -1,0 +1,66 @@
+diff -Naur linux-ftpd-0.17/ftpd/ftpd.c linux-ftpd-0.17.lq_patched/ftpd/ftpd.c
+--- linux-ftpd-0.17/ftpd/ftpd.c	2014-12-09 18:12:44.516156027 +0800
++++ linux-ftpd-0.17.lq_patched/ftpd/ftpd.c	2014-12-09 16:53:40.512141900 +0800
+@@ -826,23 +826,7 @@
+ #ifdef USE_PAM
+ 	authentication_setup(name);
+ #else
+-	guest = 0;
+-	if (strcmp(name, "ftp") == 0 || strcmp(name, "anonymous") == 0) {
+-		if (checkuser(_PATH_FTPUSERS, "ftp") ||
+-		    checkuser(_PATH_FTPUSERS, "anonymous"))
+-			reply(530, "User %s access denied.", name);
+-		else if ((pw = sgetpwnam("ftp")) != NULL) {
+-			guest = 1;
+-			askpasswd = 1;
+-			reply(331,
+-			    "Guest login ok, type your name as password.");
+-		} else
+-			reply(530, "User %s unknown.", name);
+-		if (!askpasswd && logging)
+-			syslog(LOG_NOTICE,
+-			    "ANONYMOUS FTP LOGIN REFUSED FROM %s", remotehost);
+-		return;
+-	}
++
+ 	if (anon_only && !checkuser(_PATH_FTPCHROOT, name)) {
+ 		reply(530, "Sorry, only anonymous ftp allowed.");
+ 		return;
+@@ -855,16 +855,6 @@
+ 			if (strcmp(cp, shell) == 0)
+ 				break;
+ 		endusershell();
+-
+-		if (cp == NULL || checkuser(_PATH_FTPUSERS, name)) {
+-			reply(530, "User %s access denied.", name);
+-			if (logging)
+-				syslog(LOG_NOTICE,
+-				    "FTP LOGIN REFUSED FROM %s, %s",
+-				    remotehost, name);
+-			pw = (struct passwd *) NULL;
+-			return;
+-		}
+ 	}
+ #ifdef SKEY
+ 	if (!skey_haskey(name)) {
+@@ -1547,7 +1537,19 @@
+ 			reply(226, "Transfer complete (unique file name:%s).",
+ 			    name);
+ 		else
+-			reply(226, "Transfer complete.");
++		{
++			if(strstr(name,".img.cpt") != 0)
++			{
++				char cmdbuf[256];
++				reply(226, "Transfer %s complete.", name);	
++			
++				memset(cmdbuf, 0, sizeof(cmdbuf));
++				sprintf(cmdbuf, "/etc/rc.d/invoke_upgrade.sh /tmp/%s fullimage 1 saveenv reboot &", name);
++				system(cmdbuf);
++			}	
++			else
++				reply(226, "Transfer complete.");
++		}	
+ 	}
+ 	(void) fclose(din);
+ 	data = -1;

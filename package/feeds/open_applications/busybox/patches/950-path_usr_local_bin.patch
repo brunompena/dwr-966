@@ -1,0 +1,11 @@
+--- busybox-1.17.1.ori/libbb/messages.c	2010-07-06 10:25:54.000000000 +0800
++++ busybox-1.17.1/libbb/messages.c	2014-11-19 01:27:24.247297369 +0800
+@@ -9,7 +9,7 @@
+ 
+ /* allow default system PATH to be extended via CFLAGS */
+ #ifndef BB_ADDITIONAL_PATH
+-#define BB_ADDITIONAL_PATH ""
++#define BB_ADDITIONAL_PATH ":/usr/local/bin"
+ #endif
+ 
+ /* allow version to be extended, via CFLAGS */

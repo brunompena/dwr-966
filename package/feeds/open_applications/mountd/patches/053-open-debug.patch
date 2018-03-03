@@ -1,0 +1,33 @@
+--- mountd-0.1_org/lib/log.c	2009-10-03 05:26:35.000000000 +0800
++++ mountd-0.1/lib/log.c	2015-02-13 11:41:23.152601621 +0800
+@@ -6,7 +6,8 @@
+ 
+ void log_start(void)
+ {
+-	openlog("mountd", LOG_PID, LOG_DAEMON);
++	//openlog("mountd", LOG_PID, LOG_DAEMON);
++	openlog("mountd", LOG_PID, LOG_LOCAL4);
+ }
+ 
+ void log_stop(void)
+@@ -21,10 +22,20 @@
+ 
+ 	va_start(ap, fmt);
+ 	vsnprintf(p, 256, fmt, ap);
++
++	//+++
++    FILE *output = stdout;
++    vfprintf (output, fmt, ap);	
++	//---
++	
+ 	va_end(ap);
+ 
++	int flags = LOG_LOCAL4;
++	vsyslog(flags, p, ap);
++	/*
+ 	if(daemonize)
+ 		syslog(10, p);
+ 	else
+ 		printf(p);
++	*/
+ }

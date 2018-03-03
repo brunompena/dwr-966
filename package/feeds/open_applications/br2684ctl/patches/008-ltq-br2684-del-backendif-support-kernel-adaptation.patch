@@ -1,0 +1,370 @@
+--- a/br2684ctl.c
++++ b/br2684ctl.c
+@@ -28,8 +28,8 @@
+ //605161:fchang.removed #include <linux/atmdev.h>
+ //605161:fchang.removed #include <linux/atmbr2684.h>
+ 
+-#include "linux/atmdev.h" //605161:fchang.added
+-#include "linux/atmbr2684.h" //605161:fchang.added
++#include "atmdev.h" //605161:fchang.added
++#include "atmbr2684.h" //605161:fchang.added
+ 
+ 
+ //#include "ifx_common.h"
+--- /dev/null
++++ b/atmbr2684.h
+@@ -0,0 +1,121 @@
++#ifndef _LINUX_ATMBR2684_H
++#define _LINUX_ATMBR2684_H
++
++#include <linux/types.h>
++#include <linux/atm.h>
++#include <linux/if.h>		/* For IFNAMSIZ */
++#include <linux/if_ether.h>    /* ETH_P_* Add by Henry*/
++
++/*
++ * Type of media we're bridging (ethernet, token ring, etc)  Currently only
++ * ethernet is supported
++ */
++#define BR2684_MEDIA_ETHERNET	(0)	/* 802.3 */
++#define BR2684_MEDIA_802_4	(1)	/* 802.4 */
++#define BR2684_MEDIA_TR		(2)	/* 802.5 - token ring */
++#define BR2684_MEDIA_FDDI	(3)
++#define BR2684_MEDIA_802_6	(4)	/* 802.6 */
++
++					/* used only at device creation:  */
++#define BR2684_FLAG_ROUTED	(1<<16)	/* payload is routed, not bridged */
++
++/*
++ * Is there FCS inbound on this VC?  This currently isn't supported.
++ */
++#define BR2684_FCSIN_NO		(0)
++#define BR2684_FCSIN_IGNORE	(1)
++#define BR2684_FCSIN_VERIFY	(2)
++
++/*
++ * Is there FCS outbound on this VC?  This currently isn't supported.
++ */
++#define BR2684_FCSOUT_NO	(0)
++#define BR2684_FCSOUT_SENDZERO	(1)
++#define BR2684_FCSOUT_GENERATE	(2)
++
++/*
++ * Does this VC include LLC encapsulation?
++ */
++#define BR2684_ENCAPS_VC	(0)	/* VC-mux */
++#define BR2684_ENCAPS_LLC	(1)
++#define BR2684_ENCAPS_AUTODETECT (2)	/* Unsuported */
++
++/*
++ * Is this VC bridged or routed?
++ */
++
++#define BR2684_PAYLOAD_ROUTED   (0)
++#define BR2684_PAYLOAD_BRIDGED  (1)
++
++/*
++ * This is for the ATM_NEWBACKENDIF call - these are like socket families:
++ * the first element of the structure is the backend number and the rest
++ * is per-backend specific
++ */
++struct atm_newif_br2684 {
++	atm_backend_t backend_num;	/* ATM_BACKEND_BR2684 */
++	int media;		/* BR2684_MEDIA_*, flags in upper bits */
++	char ifname[IFNAMSIZ];
++	int mtu;
++	int payload;            /* bridged or routed, Add by Henry*/
++};
++
++/*
++ * This structure is used to specify a br2684 interface - either by a
++ * positive integer (returned by ATM_NEWBACKENDIF) or the interfaces name
++ */
++#define BR2684_FIND_BYNOTHING	(0)
++#define BR2684_FIND_BYNUM	(1)
++#define BR2684_FIND_BYIFNAME	(2)
++struct br2684_if_spec {
++	int method;		/* BR2684_FIND_* */
++	union {
++		char ifname[IFNAMSIZ];
++		int devnum;
++	} spec;
++};
++
++/*
++ * This is for the ATM_SETBACKEND call - these are like socket families:
++ * the first element of the structure is the backend number and the rest
++ * is per-backend specific
++ */
++struct atm_backend_br2684 {
++	atm_backend_t backend_num;	/* ATM_BACKEND_BR2684 */
++	struct br2684_if_spec ifspec;
++	int fcs_in;		/* BR2684_FCSIN_* */
++	int fcs_out;		/* BR2684_FCSOUT_* */
++	int fcs_auto;		/* 1: fcs_{in,out} disabled if no FCS rx'ed */
++	int encaps;		/* BR2684_ENCAPS_* */
++	int payload;            /* BR2684_PAYLOAD_* Add by Henry*/
++	int has_addr;           /* 1: include HW addr */
++	int has_vpiid;		/* 1: use vpn_id - Unsupported */
++	__u8 vpn_id[7];
++	int send_padding;	/* unsupported */
++	int min_size;		/* we will pad smaller packets than this */
++};
++
++/*
++ * The BR2684_SETFILT ioctl is an experimental mechanism for folks
++ * terminating a large number of IP-only vcc's.  When netfilter allows
++ * efficient per-if in/out filters, this support will be removed
++ */
++struct br2684_filter {
++	__be32 prefix;		/* network byte order */
++	__be32 netmask;		/* 0 = disable filter */
++};
++
++struct br2684_filter_set {
++	struct br2684_if_spec ifspec;
++	struct br2684_filter filter;
++};
++
++enum br2684_payload {
++	p_routed = BR2684_PAYLOAD_ROUTED,
++	p_bridged = BR2684_PAYLOAD_BRIDGED,
++};
++
++#define BR2684_SETFILT	_IOW( 'a', ATMIOC_BACKEND + 0, \
++				struct br2684_filter_set)
++
++#endif /* _LINUX_ATMBR2684_H */
+--- /dev/null
++++ b/atmdev.h
+@@ -0,0 +1,230 @@
++/* atmdev.h - ATM device driver declarations and various related items */
++ 
++/* Written 1995-2000 by Werner Almesberger, EPFL LRC/ICA */
++ 
++
++#ifndef LINUX_ATMDEV_H
++#define LINUX_ATMDEV_H
++
++
++#include <linux/atmapi.h>
++#include <linux/atm.h>
++#include <linux/atmioc.h>
++
++
++#define ESI_LEN		6
++
++#define ATM_OC3_PCR	(155520000/270*260/8/53)
++			/* OC3 link rate:  155520000 bps
++			   SONET overhead: /270*260 (9 section, 1 path)
++			   bits per cell:  /8/53
++			   max cell rate:  353207.547 cells/sec */
++#define ATM_25_PCR	((25600000/8-8000)/54)
++			/* 25 Mbps ATM cell rate (59111) */
++#define ATM_OC12_PCR	(622080000/1080*1040/8/53)
++			/* OC12 link rate: 622080000 bps
++			   SONET overhead: /1080*1040
++			   bits per cell:  /8/53
++			   max cell rate:  1412830.188 cells/sec */
++#define ATM_DS3_PCR	(8000*12)
++			/* DS3: 12 cells in a 125 usec time slot */
++
++
++#define __AAL_STAT_ITEMS \
++    __HANDLE_ITEM(tx);			/* TX okay */ \
++    __HANDLE_ITEM(tx_err);		/* TX errors */ \
++    __HANDLE_ITEM(rx);			/* RX okay */ \
++    __HANDLE_ITEM(rx_err);		/* RX errors */ \
++    __HANDLE_ITEM(rx_drop);		/* RX out of memory */
++
++struct atm_aal_stats {
++#define __HANDLE_ITEM(i) int i
++	__AAL_STAT_ITEMS
++#undef __HANDLE_ITEM
++};
++
++
++struct atm_dev_stats {
++	struct atm_aal_stats aal0;
++	struct atm_aal_stats aal34;
++	struct atm_aal_stats aal5;
++} __ATM_API_ALIGN;
++
++
++#define ATM_GETLINKRATE	_IOW('a',ATMIOC_ITF+1,struct atmif_sioc)
++					/* get link rate */
++#define ATM_GETNAMES	_IOW('a',ATMIOC_ITF+3,struct atm_iobuf)
++					/* get interface names (numbers) */
++#define ATM_GETTYPE	_IOW('a',ATMIOC_ITF+4,struct atmif_sioc)
++					/* get interface type name */
++#define ATM_GETESI	_IOW('a',ATMIOC_ITF+5,struct atmif_sioc)
++					/* get interface ESI */
++#define ATM_GETADDR	_IOW('a',ATMIOC_ITF+6,struct atmif_sioc)
++					/* get itf's local ATM addr. list */
++#define ATM_RSTADDR	_IOW('a',ATMIOC_ITF+7,struct atmif_sioc)
++					/* reset itf's ATM address list */
++#define ATM_ADDADDR	_IOW('a',ATMIOC_ITF+8,struct atmif_sioc)
++					/* add a local ATM address */
++#define ATM_DELADDR	_IOW('a',ATMIOC_ITF+9,struct atmif_sioc)
++					/* remove a local ATM address */
++#define ATM_GETCIRANGE	_IOW('a',ATMIOC_ITF+10,struct atmif_sioc)
++					/* get connection identifier range */
++#define ATM_SETCIRANGE	_IOW('a',ATMIOC_ITF+11,struct atmif_sioc)
++					/* set connection identifier range */
++#define ATM_SETESI	_IOW('a',ATMIOC_ITF+12,struct atmif_sioc)
++					/* set interface ESI */
++#define ATM_SETESIF	_IOW('a',ATMIOC_ITF+13,struct atmif_sioc)
++					/* force interface ESI */
++#define ATM_ADDLECSADDR	_IOW('a', ATMIOC_ITF+14, struct atmif_sioc)
++					/* register a LECS address */
++#define ATM_DELLECSADDR	_IOW('a', ATMIOC_ITF+15, struct atmif_sioc)
++					/* unregister a LECS address */
++#define ATM_GETLECSADDR	_IOW('a', ATMIOC_ITF+16, struct atmif_sioc)
++					/* retrieve LECS address(es) */
++
++#define ATM_GETSTAT	_IOW('a',ATMIOC_SARCOM+0,struct atmif_sioc)
++					/* get AAL layer statistics */
++#define ATM_GETSTATZ	_IOW('a',ATMIOC_SARCOM+1,struct atmif_sioc)
++					/* get AAL layer statistics and zero */
++#define ATM_GETLOOP	_IOW('a',ATMIOC_SARCOM+2,struct atmif_sioc)
++					/* get loopback mode */
++#define ATM_SETLOOP	_IOW('a',ATMIOC_SARCOM+3,struct atmif_sioc)
++					/* set loopback mode */
++#define ATM_QUERYLOOP	_IOW('a',ATMIOC_SARCOM+4,struct atmif_sioc)
++					/* query supported loopback modes */
++#define ATM_SETSC	_IOW('a',ATMIOC_SPECIAL+1,int)
++					/* enable or disable single-copy */
++#define ATM_SETBACKEND	_IOW('a',ATMIOC_SPECIAL+2,atm_backend_t)
++					/* set backend handler */
++#define ATM_NEWBACKENDIF _IOW('a',ATMIOC_SPECIAL+3,atm_backend_t)
++					/* use backend to make new if */
++#define ATM_ADDPARTY  	_IOW('a', ATMIOC_SPECIAL+5,struct atm_iobuf)
++ 					/* add party to p2mp call */
++#define ATM_DELBACKENDIF _IOW('a',ATMIOC_SPECIAL+4,atm_backend_t)
++                                       /* set backend to remove if */
++
++#ifdef CONFIG_COMPAT
++/* It actually takes struct sockaddr_atmsvc, not struct atm_iobuf */
++#define COMPAT_ATM_ADDPARTY  	_IOW('a', ATMIOC_SPECIAL+5,struct compat_atm_iobuf)
++#endif
++#define ATM_DROPPARTY 	_IOW('a', ATMIOC_SPECIAL+6,int)
++					/* drop party from p2mp call */
++
++#ifdef CONFIG_WAN_VLAN_SUPPORT
++struct wan_vlan_struct {
++	int vlan_if_num;
++	char vlan_if_name[16]; /* VLAN Enabled WAN-IF name */
++	int8_t tag_vlan_enable;
++	int8_t untag_vlan;
++	uint16_t vlan_vci;
++};
++#define ATM_BR2684_VLAN_CONFIG _IOW('a', ATMIOC_SPECIAL+5,int)
++#define ATM_BR2684_VLAN_VCC_CONFIG _IOW('a', ATMIOC_SPECIAL+6,struct wan_vlan_struct)
++#endif
++
++/*
++ * These are backend handkers that can be set via the ATM_SETBACKEND call
++ * above.  In the future we may support dynamic loading of these - for now,
++ * they're just being used to share the ATMIOC_BACKEND ioctls
++ */
++#define ATM_BACKEND_RAW		0	
++#define ATM_BACKEND_PPP		1	/* PPPoATM - RFC2364 */
++#define ATM_BACKEND_BR2684	2	/* Bridged RFC1483/2684 */
++
++/* for ATM_GETTYPE */
++#define ATM_ITFTYP_LEN	8	/* maximum length of interface type name */
++
++/*
++ * Loopback modes for ATM_{PHY,SAR}_{GET,SET}LOOP
++ */
++
++/* Point of loopback				CPU-->SAR-->PHY-->line--> ... */
++#define __ATM_LM_NONE	0	/* no loop back     ^     ^     ^      ^      */
++#define __ATM_LM_AAL	1	/* loop back PDUs --'     |     |      |      */
++#define __ATM_LM_ATM	2	/* loop back ATM cells ---'     |      |      */
++/* RESERVED		4	loop back on PHY side  ---'		      */
++#define __ATM_LM_PHY	8	/* loop back bits (digital) ----'      |      */
++#define __ATM_LM_ANALOG 16	/* loop back the analog signal --------'      */
++
++/* Direction of loopback */
++#define __ATM_LM_MKLOC(n)	((n))	    /* Local (i.e. loop TX to RX) */
++#define __ATM_LM_MKRMT(n)	((n) << 8)  /* Remote (i.e. loop RX to TX) */
++
++#define __ATM_LM_XTLOC(n)	((n) & 0xff)
++#define __ATM_LM_XTRMT(n)	(((n) >> 8) & 0xff)
++
++#define ATM_LM_NONE	0	/* no loopback */
++
++#define ATM_LM_LOC_AAL	__ATM_LM_MKLOC(__ATM_LM_AAL)
++#define ATM_LM_LOC_ATM	__ATM_LM_MKLOC(__ATM_LM_ATM)
++#define ATM_LM_LOC_PHY	__ATM_LM_MKLOC(__ATM_LM_PHY)
++#define ATM_LM_LOC_ANALOG __ATM_LM_MKLOC(__ATM_LM_ANALOG)
++
++#define ATM_LM_RMT_AAL	__ATM_LM_MKRMT(__ATM_LM_AAL)
++#define ATM_LM_RMT_ATM	__ATM_LM_MKRMT(__ATM_LM_ATM)
++#define ATM_LM_RMT_PHY	__ATM_LM_MKRMT(__ATM_LM_PHY)
++#define ATM_LM_RMT_ANALOG __ATM_LM_MKRMT(__ATM_LM_ANALOG)
++
++/*
++ * Note: ATM_LM_LOC_* and ATM_LM_RMT_* can be combined, provided that
++ * __ATM_LM_XTLOC(x) <= __ATM_LM_XTRMT(x)
++ */
++
++
++struct atm_iobuf {
++	int length;
++	void *buffer;
++};
++
++/* for ATM_GETCIRANGE / ATM_SETCIRANGE */
++
++#define ATM_CI_MAX      -1              /* use maximum range of VPI/VCI */
++ 
++struct atm_cirange {
++	signed char	vpi_bits;	/* 1..8, ATM_CI_MAX (-1) for maximum */
++	signed char	vci_bits;	/* 1..16, ATM_CI_MAX (-1) for maximum */
++};
++
++/* for ATM_SETSC; actually taken from the ATM_VF number space */
++
++#define ATM_SC_RX	1024		/* enable RX single-copy */
++#define ATM_SC_TX	2048		/* enable TX single-copy */
++
++#define ATM_BACKLOG_DEFAULT 32 /* if we get more, we're likely to time out
++				  anyway */
++
++/* MF: change_qos (Modify) flags */
++
++#define ATM_MF_IMMED	 1	/* Block until change is effective */
++#define ATM_MF_INC_RSV	 2	/* Change reservation on increase */
++#define ATM_MF_INC_SHP	 4	/* Change shaping on increase */
++#define ATM_MF_DEC_RSV	 8	/* Change reservation on decrease */
++#define ATM_MF_DEC_SHP	16	/* Change shaping on decrease */
++#define ATM_MF_BWD	32	/* Set the backward direction parameters */
++
++#define ATM_MF_SET	(ATM_MF_INC_RSV | ATM_MF_INC_SHP | ATM_MF_DEC_RSV | \
++			  ATM_MF_DEC_SHP | ATM_MF_BWD)
++
++/*
++ * ATM_VS_* are used to express VC state in a human-friendly way.
++ */
++
++#define ATM_VS_IDLE	0	/* VC is not used */
++#define ATM_VS_CONNECTED 1	/* VC is connected */
++#define ATM_VS_CLOSING	2	/* VC is closing */
++#define ATM_VS_LISTEN	3	/* VC is listening for incoming setups */
++#define ATM_VS_INUSE	4	/* VC is in use (registered with atmsigd) */
++#define ATM_VS_BOUND	5	/* VC is bound */
++
++#define ATM_VS2TXT_MAP \
++    "IDLE", "CONNECTED", "CLOSING", "LISTEN", "INUSE", "BOUND"
++
++#define ATM_VF2TXT_MAP \
++    "ADDR",	"READY",	"PARTIAL",	"REGIS", \
++    "RELEASED", "HASQOS",	"LISTEN",	"META", \
++    "256",	"512",		"1024",		"2048", \
++    "SESSION",	"HASSAP",	"BOUND",	"CLOSE"
++
++
++
++#endif /* LINUX_ATMDEV_H */

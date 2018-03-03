@@ -1,0 +1,9 @@
+menu "Configuration"
+	depends on PACKAGE_lq-coc-app-pm
+
+	config FEATURE_LQ_COC_APP_PM_SUPPORT_DTI
+		bool "PMCU Utility with dti support"
+		default n
+		help
+		  pmcu_utiliy_dti binary will be generated.
+endmenu

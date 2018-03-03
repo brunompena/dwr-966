@@ -1,0 +1,46 @@
+diff -Nur mountd-0.1_bak/lib/mount.c mountd-0.1/lib/mount.c
+--- mountd-0.1_bak/lib/mount.c	2014-04-29 15:28:52.407017363 +0800
++++ mountd-0.1/lib/mount.c	2014-04-29 15:43:12.317018002 +0800
+@@ -447,10 +447,18 @@
+ 		s = mount_get_serial(name);
+ 		if(!s)
+ 			return;
+-		snprintf(tmp, 64, "part%s", &dev[3]);
+-		//snprintf(node, 64, "Disc-%s", &dev[2]); /* This code mount with names Disc-A1, Disc-A2, Disc-B1, Disc-B2 etc. based on sda1, sda2, sdb1 etc */
+-		snprintf(node, 64, "Disc-%s", &dev[3]); /* New Change: Mount with names Disc-1, Disc-2 etc. instead of Disc-A1, Disc-A2, Disc-B1 etc.
+-				because we group Disc-* folders under seperate folders with device serial name. */
++		if(dev[3])
++		{
++			snprintf(tmp, 64, "part%s", &dev[3]);
++			//snprintf(node, 64, "Disc-%s", &dev[2]); /* This code mount with names Disc-A1, Disc-A2, Disc-B1, Disc-B2 etc. based on sda1, sda2, sdb1 etc */
++			snprintf(node, 64, "Disc-%s", &dev[3]); /* New Change: Mount with names Disc-1, Disc-2 etc. instead of Disc-A1, Disc-A2, Disc-B1 etc.
++					because we group Disc-* folders under seperate folders with device serial name. */
++		}
++		else
++		{
++			snprintf(tmp, 64, "part0");
++			snprintf(node, 64, "Disc-0"); 
++		}
+ 		/* if(node[5] >= 'a' && node[5] <= 'z') // This code not needed for above change
+ 		{
+ 			node[5] -= 'a';
+@@ -687,6 +695,19 @@
+ 				char tmp[64];
+ 				snprintf(tmp, 64, "/sys/block/%s/", namelist[n]->d_name);
+ 				m = scandir(tmp, &namelist2, dir_filter2, dir_sort);
++				if(m==0)
++				{
++					char out_buffer[PATH_MAX];
++					snprintf(tmp, 64, "/sys/block/%s", namelist[n]->d_name);
++					realpath(tmp,out_buffer);
++					//log_printf("JKB:::%s, out_buffer=%s",__FUNCTION__,out_buffer);
++					if(strstr(out_buffer,"ifxusb_hcd"))
++					{
++						strncpy(&block[blk_cnt][0], namelist[n]->d_name, MAX_BLOCK);
++						//log_printf("JKB:::%s, block[%d][0]=%s",__FUNCTION__,blk_cnt,block[blk_cnt] );
++						blk_cnt++;
++					}
++				}
+ 				while(m--)
+ 				{
+ 					strncpy(&block[blk_cnt][0], namelist2[m]->d_name, MAX_BLOCK);

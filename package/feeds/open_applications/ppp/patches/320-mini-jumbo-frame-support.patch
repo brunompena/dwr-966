@@ -1,0 +1,314 @@
+Index: ppp-2.4.4/pppd/plugins/rp-pppoe/Makefile.linux
+===================================================================
+--- ppp-2.4.4.orig/pppd/plugins/rp-pppoe/Makefile.linux	2013-12-03 15:03:57.000000000 +0530
++++ ppp-2.4.4/pppd/plugins/rp-pppoe/Makefile.linux	2013-12-03 15:06:42.000000000 +0530
+@@ -26,6 +26,9 @@
+ 
+ COPTS=-O2 -g
+ CFLAGS=$(COPTS) -I../../../include/linux
++
++CFLAGS+=$(LTQ_CFLAGS)
++
+ all: rp-pppoe.so pppoe-discovery
+ 
+ pppoe-discovery: pppoe-discovery.o utils.o libplugin.a
+Index: ppp-2.4.4/pppd/plugins/rp-pppoe/common.c
+===================================================================
+--- ppp-2.4.4.orig/pppd/plugins/rp-pppoe/common.c	2013-12-03 15:03:57.000000000 +0530
++++ ppp-2.4.4/pppd/plugins/rp-pppoe/common.c	2013-12-03 15:21:48.000000000 +0530
+@@ -60,7 +60,11 @@
+     }
+ 
+     /* Do some sanity checks on packet */
++#ifdef MINI_JUMBO_FRAME
++    if (len > ETH_JUMBO_LEN - PPPOE_OVERHEAD) { /* 6-byte overhead for PPPoE header */
++#else
+     if (len > ETH_DATA_LEN - 6) { /* 6-byte overhead for PPPoE header */
++#endif
+ 	error("Invalid PPPoE packet length (%u)", len);
+ 	return -1;
+     }
+Index: ppp-2.4.4/pppd/plugins/rp-pppoe/discovery.c
+===================================================================
+--- ppp-2.4.4.orig/pppd/plugins/rp-pppoe/discovery.c	2013-12-03 15:03:57.000000000 +0530
++++ ppp-2.4.4/pppd/plugins/rp-pppoe/discovery.c	2013-12-03 15:17:52.000000000 +0530
+@@ -12,6 +12,7 @@
+ static char const RCSID[] =
+ "$Id: discovery.c,v 1.4 2005/03/22 10:22:32 paulus Exp $";
+ 
++#define _GNU_SOURCE 1
+ #include "pppoe.h"
+ 
+ #include <string.h>
+@@ -111,6 +112,9 @@
+ {
+     struct PacketCriteria *pc = (struct PacketCriteria *) extra;
+     PPPoEConnection *conn = pc->conn;
++#ifdef MINI_JUMBO_FRAME
++    UINT16_t mru;
++#endif
+     int i;
+ 
+     switch(type) {
+@@ -162,6 +166,21 @@
+ 	conn->relayId.length = htons(len);
+ 	memcpy(conn->relayId.payload, data, len);
+ 	break;
++#ifdef MINI_JUMBO_FRAME
++   case TAG_PPP_MAX_PAYLOAD:
++         if (len == sizeof(mru)) {
++        
++            memcpy(&mru, data, sizeof(mru));
++            mru = ntohs(mru);
++      
++            if (mru >= ETH_PPPOE_MTU) {
++              conn->mru = mru;
++              conn->seenMaxPayload = 1;
++            }
++    
++         }
++         break;
++#endif
+     case TAG_SERVICE_NAME_ERROR:
+ 	if (conn->printACNames) {
+ 	    printf("Got a Service-Name-Error tag: %.*s\n", (int) len, data);
+@@ -203,10 +222,25 @@
+ 	      void *extra)
+ {
+     PPPoEConnection *conn = (PPPoEConnection *) extra;
++#ifdef MINI_JUMBO_FRAME
++    UINT16_t mru;
++#endif
+     switch(type) {
+     case TAG_SERVICE_NAME:
+ 	dbglog("PADS: Service-Name: '%.*s'", (int) len, data);
+ 	break;
++#ifdef MINI_JUMBO_FRAME
++    case TAG_PPP_MAX_PAYLOAD:
++      if (len == sizeof(mru)) {
++          memcpy(&mru, data, sizeof(mru));
++          mru = ntohs(mru);
++          if (mru >= ETH_PPPOE_MTU) {
++            conn->mru = mru;            
++            conn->seenMaxPayload = 1;
++          }
++      }
++    break;
++#endif
+     case TAG_SERVICE_NAME_ERROR:
+ 	fatal("PADS: Service-Name-Error: %.*s", (int) len, data);
+     case TAG_AC_SYSTEM_ERROR:
+@@ -276,7 +310,21 @@
+ 	cursor += sizeof(pid) + TAG_HDR_SIZE;
+ 	plen += sizeof(pid) + TAG_HDR_SIZE;
+     }
+-
++#ifdef MINI_JUMBO_FRAME
++    /* Add our maximum MTU/MRU */
++    if( conn->mru >  ETH_PPPOE_MTU ) {
++    
++      PPPoETag maxPayload;
++      UINT16_t mru = htons(conn->mru);
++      maxPayload.type = htons(TAG_PPP_MAX_PAYLOAD);
++      maxPayload.length = htons(sizeof(mru));
++      memcpy(maxPayload.payload, &mru, sizeof(mru));
++      CHECK_ROOM(cursor, packet.payload, sizeof(mru) + TAG_HDR_SIZE);
++      memcpy(cursor, &maxPayload, sizeof(mru) + TAG_HDR_SIZE);
++      cursor += sizeof(mru) + TAG_HDR_SIZE;
++      plen += sizeof(mru) + TAG_HDR_SIZE;
++    }
++#endif
+     packet.length = htons(plen);
+ 
+     sendPacket(conn, conn->discoverySocket, &packet, (int) (plen + HDR_SIZE));
+@@ -312,6 +360,9 @@
+     pc.serviceNameOK = (conn->serviceName) ? 0 : 1;
+     pc.seenACName    = 0;
+     pc.seenServiceName = 0;
++#ifdef MINI_JUMBO_FRAME
++    conn->seenMaxPayload = 0;
++#endif
+ 	
+     do {
+ 	if (BPF_BUFFER_IS_EMPTY) {
+@@ -443,7 +494,22 @@
+ 	cursor += sizeof(pid) + TAG_HDR_SIZE;
+ 	plen += sizeof(pid) + TAG_HDR_SIZE;
+     }
++#ifdef MINI_JUMBO_FRAME
++    /* Add our maximum MTU/MRU */
++    if( conn->seenMaxPayload == 1 ) {
++
++      PPPoETag maxPayload;
++      UINT16_t mru = htons(conn->mru);
++      maxPayload.type = htons(TAG_PPP_MAX_PAYLOAD);
++      maxPayload.length = htons(sizeof(mru));
++      memcpy(maxPayload.payload, &mru, sizeof(mru));
++      CHECK_ROOM(cursor, packet.payload, sizeof(mru) + TAG_HDR_SIZE);
++      memcpy(cursor, &maxPayload, sizeof(mru) + TAG_HDR_SIZE);
++      cursor += sizeof(mru) + TAG_HDR_SIZE;
++      plen += sizeof(mru) + TAG_HDR_SIZE;
++    }
+ 
++#endif
+     /* Copy cookie and relay-ID if needed */
+     if (conn->cookie.type) {
+ 	CHECK_ROOM(cursor, packet.payload,
+@@ -636,6 +702,9 @@
+ #endif
+     } while (conn->discoveryState == STATE_SENT_PADR);
+ 
++#ifdef MINI_JUMBO_FRAME
++    info("discovery:: Negotiated MRU=%d. MRU should be adapted by caller\n",conn->mru);
++#endif
+     /* We're done. */
+     conn->discoveryState = STATE_SESSION;
+     return;
+Index: ppp-2.4.4/pppd/plugins/rp-pppoe/plugin.c
+===================================================================
+--- ppp-2.4.4.orig/pppd/plugins/rp-pppoe/plugin.c	2013-12-03 15:03:57.000000000 +0530
++++ ppp-2.4.4/pppd/plugins/rp-pppoe/plugin.c	2013-12-03 15:20:23.000000000 +0530
+@@ -127,6 +127,36 @@
+ {
+     struct sockaddr_pppox sp;
+ 
++#ifdef MINI_JUMBO_FRAME
++    struct ifreq ifr;
++    int s;
++
++    /* Restore configuration */
++    lcp_allowoptions[0].mru = conn->mtu;
++    lcp_wantoptions[0].mru = conn->mru;
++
++    /* Update maximum MRU */
++    s = socket(AF_INET, SOCK_DGRAM, 0);
++    if (s < 0) {
++      error("Can't get MTU for %s: %m", conn->ifName);
++      return -1;
++    }
++    strncpy(ifr.ifr_name, conn->ifName, sizeof(ifr.ifr_name));
++    if (ioctl(s, SIOCGIFMTU, &ifr) < 0) {
++      error("Can't get MTU for %s: %m", conn->ifName);
++      close(s);
++      return -1;
++    }
++    close(s);
++
++    if (lcp_allowoptions[0].mru > ifr.ifr_mtu - TOTAL_OVERHEAD)
++    	lcp_allowoptions[0].mru = ifr.ifr_mtu - TOTAL_OVERHEAD;
++    if (lcp_wantoptions[0].mru > ifr.ifr_mtu - TOTAL_OVERHEAD)
++    	lcp_wantoptions[0].mru = ifr.ifr_mtu - TOTAL_OVERHEAD;
++    conn->mru = lcp_allowoptions[0].mru;
++    conn->mtu = lcp_allowoptions[0].mru;
++    info("Interface Name: %s MTU=%d MRU to be Negotiated: %d",conn->ifName,ifr.ifr_mtu, conn->mru );
++#endif
+     strlcpy(ppp_devnam, devnam, sizeof(ppp_devnam));
+     if (existingSession) {
+ 	unsigned int mac[ETH_ALEN];
+@@ -150,7 +180,12 @@
+ 	    return -1;
+ 	}
+     }
+-
++#ifdef MINI_JUMBO_FRAME
++    if( conn->seenMaxPayload ) {
++       lcp_allowoptions[0].mru = conn->mru;
++       lcp_wantoptions[0].mru = conn->mru;
++    }
++#endif
+     /* Set PPPoE session-number for further consumption */
+     ppp_session_number = ntohs(conn->session);
+ 
+@@ -395,7 +430,11 @@
+ 	lcp_allowoptions[0].mru = MAX_PPPOE_MTU;
+     if (lcp_wantoptions[0].mru > MAX_PPPOE_MTU)
+ 	lcp_wantoptions[0].mru = MAX_PPPOE_MTU;
+-
++#ifdef MINI_JUMBO_FRAME
++    /* Save configuration */
++    conn->mtu = lcp_allowoptions[0].mru;
++    conn->mru = lcp_wantoptions[0].mru;
++#endif
+     ccp_allowoptions[0].deflate = 0;
+     ccp_wantoptions[0].deflate = 0;
+ 
+Index: ppp-2.4.4/pppd/plugins/rp-pppoe/pppoe.h
+===================================================================
+--- ppp-2.4.4.orig/pppd/plugins/rp-pppoe/pppoe.h	2013-12-03 15:03:57.000000000 +0530
++++ ppp-2.4.4/pppd/plugins/rp-pppoe/pppoe.h	2013-12-03 15:09:35.000000000 +0530
+@@ -178,6 +178,11 @@
+ #define TAG_AC_COOKIE          0x0104
+ #define TAG_VENDOR_SPECIFIC    0x0105
+ #define TAG_RELAY_SESSION_ID   0x0110
++
++#ifdef MINI_JUMBO_FRAME
++#define TAG_PPP_MAX_PAYLOAD    0x0120
++#endif
++
+ #define TAG_SERVICE_NAME_ERROR 0x0201
+ #define TAG_AC_SYSTEM_ERROR    0x0202
+ #define TAG_GENERIC_ERROR      0x0203
+@@ -225,6 +230,11 @@
+ #define IPV4ALEN     4
+ #define SMALLBUF   256
+ 
++#ifdef MINI_JUMBO_FRAME
++/* The mini jumbo frame size is choosen based on requirement */
++#define ETH_JUMBO_LEN 1574
++#endif
++
+ /* A PPPoE Packet, including Ethernet headers */
+ typedef struct PPPoEPacketStruct {
+     struct ethhdr ethHdr;	/* Ethernet header */
+@@ -238,21 +248,38 @@
+     unsigned int code:8;	/* PPPoE code */
+     unsigned int session:16;	/* PPPoE session */
+     unsigned int length:16;	/* Payload length */
+-    unsigned char payload[ETH_DATA_LEN]; /* A bit of room to spare */
++#ifdef MINI_JUMBO_FRAME
++    unsigned char payload[ETH_JUMBO_LEN]; /* A LOT of room to spare */
++#else
++    unsigned char payload[ETH_DATA_LEN]; /* A LOT of room to spare */
++#endif
+ } PPPoEPacket;
+ 
+ /* Header size of a PPPoE packet */
+ #define PPPOE_OVERHEAD 6  /* type, code, session, length */
+ #define HDR_SIZE (sizeof(struct ethhdr) + PPPOE_OVERHEAD)
++
++#ifdef MINI_JUMBO_FRAME
++#define MAX_PPPOE_PAYLOAD (ETH_JUMBO_LEN - PPPOE_OVERHEAD)
++#define PPP_OVERHEAD 2  /* protocol */
++#define MAX_PPPOE_MTU (MAX_PPPOE_PAYLOAD - PPP_OVERHEAD)
++#define TOTAL_OVERHEAD (PPPOE_OVERHEAD + PPP_OVERHEAD)
++#define ETH_PPPOE_MTU (ETH_DATA_LEN - TOTAL_OVERHEAD)
++#else
+ #define MAX_PPPOE_PAYLOAD (ETH_DATA_LEN - PPPOE_OVERHEAD)
+ #define MAX_PPPOE_MTU (MAX_PPPOE_PAYLOAD - 2)
++#endif
+ 
+ /* PPPoE Tag */
+ 
+ typedef struct PPPoETagStruct {
+     unsigned int type:16;	/* tag type */
+     unsigned int length:16;	/* Length of payload */
++#ifdef MINI_JUMBO_FRAME
++    unsigned char payload[ETH_JUMBO_LEN]; /* A LOT of room to spare */
++#else
+     unsigned char payload[ETH_DATA_LEN]; /* A LOT of room to spare */
++#endif
+ } PPPoETag;
+ /* Header size of a PPPoE tag */
+ #define TAG_HDR_SIZE 4
+@@ -290,6 +317,11 @@
+     int numPADOs;		/* Number of PADO packets received */
+     PPPoETag cookie;		/* We have to send this if we get it */
+     PPPoETag relayId;		/* Ditto */
++#ifdef MINI_JUMBO_FRAME
++    int seenMaxPayload;
++    int mtu;			/* Stored MTU */
++    int mru;			/* Stored MRU */
++#endif
+ } PPPoEConnection;
+ 
+ /* Structure used to determine acceptable PADO or PADS packet */

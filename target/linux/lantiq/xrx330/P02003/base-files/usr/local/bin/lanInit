@@ -1,0 +1,49 @@
+#!/bin/sh
+LANIP=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select ipaddr from networkInterface where LogicalIfName = 'LAN1';"`
+SUBNET=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select subnetmask from networkInterface where LogicalIfName = 'LAN1';"`
+INTERFACE=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select interfaceName from networkInterface where LogicalIfName = 'LAN1';"`
+#sleep 2
+
+logger -t [LAN] -p local5.info LAN IP $LANIP
+logger -t [LAN] -p local5.info Hostname $NAME
+logger -t [LAN] -p local5.info Domainname $DOMAIN
+
+ifconfig $INTERFACE $LANIP netmask $SUBNET
+
+DOMAIN=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select domain from system;"`
+NAME=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select name from system;"`
+if [ "$NAME" != "" ]; then
+	hostname $NAME
+	if [ "$DOMAIN" = "" ]; then
+		echo "$LANIP	$NAME.com $NAME " > /etc/hosts
+	else
+		echo "$LANIP	$NAME.$DOMAIN $NAME " > /etc/hosts
+	fi
+fi
+
+ResetDefault=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select resetToDefault from ResetToDefault;"`
+# start dnsmasq
+killall -9 dnsmasq
+if [ "$ResetDefault" = "1" ]; then
+	# GARYeh 20131003: for Landing Page, always set dns to lan ip
+	/usr/sbin/dnsmasq -u root --address=/#/$LANIP
+else
+	/usr/sbin/dnsmasq -u root --resolv-file=/ramdisk/etc/resolv.conf
+fi
+
+if [ "$1" = "restart" ]; then 
+	/usr/local/bin/dhcpdInit restart
+	
+	killall -9 webs
+	
+	/usr/local/bin/routing.sh
+	
+	adv_route start usb0
+	
+	# when lanInit, upnp configuration also need to be reconfigured
+	/usr/local/bin/upnp_service.sh
+else	
+	/usr/local/bin/dhcpdInit
+fi
+
+

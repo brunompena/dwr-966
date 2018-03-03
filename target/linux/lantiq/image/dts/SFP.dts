@@ -1,0 +1,62 @@
+/dts-v1/;
+
+/include/ "falcon.dtsi"
+
+/ {
+	model = "SFP - Lantiq Falcon SFP Stick";
+
+	chosen {
+		// bootargs = "console=ttyLTQ0,115200 init=/etc/preinit";
+	};
+
+	memory@0 {
+		reg = <0x0 0x4000000>;  // 64M at 0x0
+	};
+
+	localbus@10000000 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "lantiq,sflash-falcon", "simple-bus";
+		busnum = <0>;
+
+		m25p80@0 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "s25fl129p1";
+			reg = <0 0>;
+			linux,modalias = "m25p80", "s25fl129p1";
+			linux,mtd-name = "sflash";
+			spi-max-frequency = <10000000>;
+
+			partition@0 {
+				reg = <0x0 0x00080000>;
+				label = "SPI (RO) U-Boot Image";
+				read-only;
+			};
+
+			partition@80000 {
+				reg = <0x00080000 0x00080000>;
+				label = "SPI (RO) DTB Image";
+				read-only;
+			};
+
+			partition@100000 {
+				reg = <0x00100000 0x00400000>;
+				label = "SPI (RO) Linux Kernel Image";
+				read-only;
+			};
+		};
+	};
+
+	fpi@1E000000 {
+		serial@100C00 {
+			pinctrl-names = "default";
+			/* use "empty" pinctrl to leave setting from u-boot enabled */
+			pinctrl-0 = < >;
+		};
+
+		i2c@200000 {
+			status = "okay";
+		};
+	};
+};

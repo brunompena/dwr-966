@@ -1,0 +1,1 @@
+cmd_/media/SANDISK/mydir/AX88772B/asix.ko := mips-openwrt-linux-uclibc-ld -r  -m elf32btsmip -T /home/dean/5.3/UGW-5.3-SW-CD/UGW-5.3-SW-CD/Software/Sources/UGW-5.3/build_dir/linux-ltqcpe_grx388_gw_he_ethwan_lte/linux-2.6.32.42/scripts/module-common.lds --build-id -o /media/SANDISK/mydir/AX88772B/asix.ko /media/SANDISK/mydir/AX88772B/asix.o /media/SANDISK/mydir/AX88772B/asix.mod.o

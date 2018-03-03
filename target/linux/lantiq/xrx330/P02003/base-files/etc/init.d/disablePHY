@@ -1,0 +1,11 @@
+#!/bin/sh /etc/rc.common
+
+START=16
+
+start() {
+	echo "disable PHY..."
+	switch_cli IFX_ETHSW_PORT_LINK_CFG_SET nPortId=1 bLinkForce=1 eLink=1
+	switch_cli IFX_ETHSW_PORT_LINK_CFG_SET nPortId=2 bLinkForce=1 eLink=1
+	switch_cli IFX_ETHSW_PORT_LINK_CFG_SET nPortId=3 bLinkForce=1 eLink=1
+	switch_cli IFX_ETHSW_PORT_LINK_CFG_SET nPortId=4 bLinkForce=1 eLink=1
+}

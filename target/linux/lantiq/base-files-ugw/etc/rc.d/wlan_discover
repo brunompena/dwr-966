@@ -1,0 +1,120 @@
+#!/bin/sh
+
+# This script configures the mapping of physical WLAN interface to WLAN vendor in rc.conf.
+# Assumption: Only PCI interfaces need to be configured, because AHB is always Lantiq, 
+#             and will be set at compile time if it exists.
+
+if [ ! "$ENVLOADED" ]; then
+	if [ -r /etc/rc.conf ]; then
+		 . /etc/rc.conf 2> /dev/null
+		ENVLOADED="1"
+	fi
+fi
+
+if [ ! "$CONFIGLOADED" ]; then
+	if [ -r /etc/rc.d/config.sh ]; then
+		. /etc/rc.d/config.sh 2>/dev/null
+		CONFIGLOADED="1"
+	fi
+fi
+
+ATH_CODE="168c"
+LTQ_CODE="1a30"
+MDTK_CODE="1814"
+
+
+PCI_FILENAME="/tmp/lspci.txt"
+
+ATH_HWNAME="9880"
+ATH_VENDOR="QCA"
+ATH_PREFIX="ath"
+
+LTQ_HWNAME="wave"
+LTQ_VENDOR="LANTIQ"
+LTQ_PREFIX="wave"
+
+MDTK_HWNAME="5592"
+MDTK_VENDOR="Ralink"
+MDTK_PREFIX="ra"
+
+PCI_DEVICES_COUNT=0
+AHB_WLAN_COUNT="0"
+
+lspci  > $PCI_FILENAME
+PCI_DEVICES_COUNT=`lspci  | wc -l`
+PCI_ATH_COUNT=`lspci | grep -c $ATH_CODE`
+PCI_LTQ_COUNT=`lspci | grep -c $LTQ_CODE`
+PCI_MDTK_COUNT=`lspci | grep -c $MDTK_CODE`
+PCI_WLAN_COUNT=`expr $PCI_ATH_COUNT + $PCI_LTQ_COUNT + $PCI_MDTK_COUNT`
+echo "wlan_discover: PCI_DEVICES COUNT: $PCI_DEVICES_COUNT "
+echo "wlan_discover: PCI_ATH COUNT: $PCI_ATH_COUNT "
+echo "wlan_discover: PCI_LTQ COUNT: $PCI_LTQ_COUNT "
+
+if [ -e /sys/bus/platform/devices ]
+then
+	# Internal WLAN is identified as mtlk on AHB bus. This is "mtlk" before UGW-6.1, and "mtlk.0" in UGW-6.1
+   AHB_WLAN_COUNT=`ls /sys/bus/platform/devices | grep mtlk -c`
+   echo "wlan_discover: AHB_WLAN_COUNT: $AHB_WLAN_COUNT "
+fi
+
+TOTAL_WLAN_COUNT=`expr $PCI_WLAN_COUNT + $AHB_WLAN_COUNT`
+echo "wlan_discover: TOTAL WLAN COUNT: $TOTAL_WLAN_COUNT "
+
+if [ "$TOTAL_WLAN_COUNT" = "0" ] 
+then
+   echo "wlan_discover: There are no wlan interfaces.... exit  "
+   exit 1
+fi
+
+# Number of interfaces defined in rc.conf
+PHY_COUNT=`/usr/sbin/status_oper -f /flash/rc.conf GET "wlan_phy" "wlan_phy_Count" `
+echo "wlan_discover: VALID PHY_CNT: $PHY_COUNT "
+
+# Skip over the first interface if there is AHB WLAN
+apIndex=$AHB_WLAN_COUNT
+
+pciIndex=0
+lindex=0
+while [ $pciIndex -lt $PCI_DEVICES_COUNT ] && [ $apIndex -lt $PHY_COUNT ]
+do
+   VENDOR_STRING=""
+   lindex=`expr $pciIndex + 1`
+   eval lineindex=$lindex'p'
+   eval VENDOR_STRING=`sed -n $lineindex $PCI_FILENAME | cut -b 21-24`
+   #echo " pciIndex=$pciIndex apIndex=$apIndex  VENDOR STRING: $VENDOR_STRING "
+
+   wlan_vendor_hwName=wlss_$apIndex'_hwName'
+   wlan_vendor_name=wlss_$apIndex'_vendor'
+   wlan_vendor_prefix=wlss_$apIndex'_prefixScript'
+   if [ "$VENDOR_STRING" = $ATH_CODE ]; then
+      `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_hwName" "$ATH_HWNAME" `
+      `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_name" "$ATH_VENDOR" `
+      `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_prefix" "$ATH_PREFIX" `
+      apIndex=`expr $apIndex + 1`
+   elif [ "$VENDOR_STRING" = $MDTK_CODE ]; then
+      `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_hwName" "$MDTK_HWNAME" `
+      `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_name" "$MDTK_VENDOR" `
+      `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_prefix" "$MDTK_PREFIX" `
+      apIndex=`expr $apIndex + 1`
+   elif [ "$VENDOR_STRING" = $LTQ_CODE ]; then
+      `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_hwName" "$LTQ_HWNAME" `
+      `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_name" "$LTQ_VENDOR" `
+      `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_prefix" "$LTQ_PREFIX" `
+      apIndex=`expr $apIndex + 1`
+   fi
+   pciIndex=`expr $pciIndex + 1`
+done
+
+echo "wlan_discover: highest discovered apIndex is $apIndex"
+while [ $apIndex -lt $PHY_COUNT ]
+do
+   wlan_vendor_hwName=wlss_$apIndex'_hwName'
+   wlan_vendor_name=wlss_$apIndex'_vendor'
+   wlan_vendor_prefix=wlss_$apIndex'_prefixScript'
+   `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_hwName" "UNKNOWN" `
+   `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_name" "UNKNOWN" `
+   `/usr/sbin/status_oper -u -f /flash/rc.conf SET "wlan_ss" "$wlan_vendor_prefix" "UNKNOWN" `
+   apIndex=`expr $apIndex + 1`
+done
+
+

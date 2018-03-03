@@ -1,0 +1,177 @@
+if LANTIQ
+
+config SOC_TYPE_XWAY
+	bool
+	select PINCTRL_XWAY
+	select USB_ARCH_HAS_HCD
+	default n
+
+choice
+	prompt "SoC Type"
+	default SOC_XWAY
+
+config SOC_AMAZON_SE
+	bool "Amazon SE"
+	select SOC_TYPE_XWAY
+
+config SOC_XWAY
+	bool "XWAY"
+	select SOC_TYPE_XWAY
+	select HW_HAS_PCI
+	select ARCH_SUPPORTS_MSI
+
+config SOC_FALCON
+	bool "FALCON"
+	select PINCTRL_FALCON
+
+endchoice
+
+choice
+	prompt "Devicetree"
+
+config DT_EASY50712
+	bool "Easy50712"
+	depends on SOC_XWAY
+endchoice
+
+config PCI_LANTIQ_BOOT
+	bool "PCI Boot Support"
+	depends on SOC_XWAY && PCI && !PCI_LANTIQ
+	default n
+	---help---
+	PCI bonding boot used for DSL off-chip bonding. Only xRX200 platform is
+	supported To use this option, xRX200 family board and bonding daughter
+	board must connect each other.
+
+config PCI_LANTIQ
+	bool "PCI Support"
+	depends on SOC_XWAY && PCI
+
+config PCIE_LANTIQ
+	bool "PCIE Support"
+	depends on SOC_XWAY && PCI
+choice
+	prompt "LANTIQ PCIE: Default PCIe PHY Clock Mode"
+	depends on PCIE_LANTIQ
+	default LANTIQ_PCIE_PHY_36MHZ_MODE
+	---help---
+	  Select ifx pci express phy clock mode by default.
+	config LANTIQ_PCIE_PHY_36MHZ_MODE
+	    bool "36MHz"
+
+	config LANTIQ_PCIE_PHY_36MHZ_SSC_MODE
+	    bool "36MHz SSC mode"
+
+	config LANTIQ_PCIE_PHY_25MHZ_MODE
+	    bool "25MHz"
+
+	config LANTIQ_PCIE_PHY_100MHZ_MODE
+	    bool "100MHz"
+endchoice
+
+config LANTIQ_PCIE_1ST_CORE
+	bool "Lantiq PCIE Core 0 Support"
+	depends on PCIE_LANTIQ
+	default y
+
+config LANTIQ_PCIE_HW_SWAP
+	bool "Lantiq PCIE Core 0 Outbound Hardware Swap Support"
+	depends on LANTIQ_PCIE_1ST_CORE
+	default y
+	---help---
+	  This will enable PCIe Core 0 Outbound hardware swap. It should be
+	  enabled together with PCI
+
+config LANTIQ_PCIE_INBOUND_NO_HW_SWAP
+	bool "Lantiq PCIE Core 0 Inbound Hardware Swap disabled"
+	depends on LANTIQ_PCIE_1ST_CORE
+	default n
+	---help---
+	  This will disable PCIe Core 0 Inbound Hardware Swap. It should be
+	  only used together with VRX318
+
+config LANTIQ_PCIE_RST_EP_ACTIVE_HIGH
+	bool "Lantiq PCIE Core 0 EP reset signal active high"
+	depends on LANTIQ_PCIE_1ST_CORE
+	default n
+	---help---
+	  Normally PCIe EP reset is low active. It should be only used
+	  together with VRX318 due to dying gasp
+
+config LANTIQ_PCIE_2ND_CORE
+	bool "Lantiq PCIE Core 1 Support"
+	depends on PCIE_LANTIQ
+	default n
+	---help---
+	  This will enable 2nd PCIe RC support
+
+config LANTIQ_PCIE1_HW_SWAP
+	bool "Lantiq PCIE Core 1 Outbound Hardware Swap Support"
+	depends on LANTIQ_PCIE_2ND_CORE
+	default n
+	---help---
+	  This will enable PCIe Core 1 Outbound data swap. It should be
+	  enabled together with PCI
+
+config LANTIQ_PCIE1_INBOUND_NO_HW_SWAP
+	bool "Lantiq PCIE Core 1 Inbound Hardware Swap Disabled"
+	depends on LANTIQ_PCIE_2ND_CORE
+	default n
+	---help---
+	  This will disable PCIe Core 1 Inbound Hardware Swap. It should be
+	  only used together with VRX318
+
+config LANTIQ_PCIE1_RST_EP_ACTIVE_HIGH
+	bool "Lantiq PCIE Core 1 EP reset signal active high"
+	depends on LANTIQ_PCIE_2ND_CORE
+	default n
+	---help---
+	  Normally PCIe EP reset is low active. It should be only used together
+	  with VRX318 due to dyning gasp
+
+config LANTIQ_PCIE_3RD_CORE
+	bool "Lantiq PCIE Core 2 Support"
+	depends on PCIE_LANTIQ
+	default n
+	---help---
+	  This will enable 3rd PCIe RC support
+
+config LANTIQ_PCIE2_HW_SWAP
+	bool "Lantiq PCIE Core 2 Outbound Hardware Swap Support"
+	depends on LANTIQ_PCIE_3RD_CORE
+	default n
+	---help---
+	  This will enable PCIe Core 2 Outbound data swap. It should be enabled
+	  together with PCI
+
+config LANTIQ_PCIE2_INBOUND_NO_HW_SWAP
+	bool "Lantiq PCIE Core 2 Inbound Hardware Swap Disabled"
+	depends on LANTIQ_PCIE_3RD_CORE
+	default n
+	---help---
+	  This will disable PCIe Core 2 Inbound Hardware Swap. It should be
+	  only used together with VRX318
+
+config LANTIQ_PCIE2_RST_EP_ACTIVE_HIGH
+	bool "Lantiq PCIE Core 2 EP reset signal active high"
+	depends on LANTIQ_PCIE_3RD_CORE
+	default n
+	---help---
+	  Normally PCIe EP reset is low active. It should be only used together
+	  with VRX318 due to dyning gasp
+
+config PCIE_LANTIQ_MSI
+	bool
+	depends on PCIE_LANTIQ && PCI_MSI
+	default y
+
+config XRX200_PHY_FW
+	bool "XRX200 PHY firmware loader"
+	depends on SOC_XWAY
+
+config LANTIQ_IMAGE_EXTRA_CHECKS
+	bool "Extra check fields on PHY firmware header"
+	default n
+	depends on SOC_XWAY
+
+endif

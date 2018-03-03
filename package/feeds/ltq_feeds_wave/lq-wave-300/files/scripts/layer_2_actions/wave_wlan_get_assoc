@@ -1,0 +1,36 @@
+#!/bin/sh
+
+# Defines
+if [ ! "$MTLK_INIT_PLATFORM" ]; then
+	. /tmp/mtlk_init_platform.sh
+fi
+
+apIndex=$1
+
+print2log DBG "wave_wlan_get_assoc: args: $*"
+timestamp "wave_wlan_get_assoc:$apIndex:begin"
+
+# Get corresponding wlan network interface from mapping file
+wlan=`find_wave_if_from_index $apIndex`
+
+get_rate()
+{
+	rate_t=`api_wrapper get mtdump $wlan PeerFlowStatus $mac -f /bin/mtdump.mtidlc_PeerFlowStat`
+	rate=`echo "$rate_t" | grep "Last transmit rate\$"  | sed -e "s/:.*//" -e "s/ *//g"`
+}
+macs=`api_wrapper get iwlist $wlan peers \| awk \'/[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]/ {print \\$1}\'`
+
+j=0
+for mac in $macs
+do
+	echo "mac_$j=\""$mac"\""
+	echo "ip_$j=\"0.0.0.0\""
+	echo "auth_$j=\"1\""
+	get_rate
+	echo "rate_$j=\""$rate"\""
+	j=`expr $j + 1`
+done
+
+echo "assoc_count=\""$j"\""
+
+timestamp "wave_wlan_get_assoc:$apIndex:done"

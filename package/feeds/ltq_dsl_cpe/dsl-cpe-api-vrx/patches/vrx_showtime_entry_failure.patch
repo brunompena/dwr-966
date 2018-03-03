@@ -1,0 +1,39 @@
+diff -Naur org/src/device/drv_dsl_cpe_device_vrx.c new/src/device/drv_dsl_cpe_device_vrx.c
+--- org/src/device/drv_dsl_cpe_device_vrx.c	2013-08-09 19:56:23.000000000 +0200
++++ new/src/device/drv_dsl_cpe_device_vrx.c	2013-08-16 23:12:02.303971000 +0200
+@@ -5176,9 +5176,11 @@
+             DSL_DRV_CRLF, DSL_DEV_NUM(pContext)));
+ /* Do not return error for VR10 because this interface is not clean and
+    returning an error will restart the autoboot handler! */
++#if 0
+ #if defined (DSL_VRX_DEVICE_VR9)
+          return DSL_ERROR;
+ #endif
++#endif
+       }
+    }
+    else
+@@ -5194,9 +5196,11 @@
+             DSL_DRV_CRLF, DSL_DEV_NUM(pContext)));
+ /* Do not return error for VR10 because this interface is not clean and
+    returning an error will restart the autoboot handler! */
++#if 0
+ #if defined (DSL_VRX_DEVICE_VR9)
+          return DSL_ERROR;
+ #endif
++#endif
+       }
+    }
+ #endif /* INCLUDE_DSL_ATM_PTM_INTERFACE_SUPPORT*/
+@@ -5304,9 +5308,11 @@
+             DSL_DRV_CRLF, DSL_DEV_NUM(pContext)));
+ /* Do not return error for VR10 because this interface is not clean and
+    returning an error will restart the autoboot handler! */
++#if 0
+ #if defined (DSL_VRX_DEVICE_VR9)
+          return DSL_ERROR;
+ #endif
++#endif
+       }
+ #endif /* INCLUDE_DSL_ATM_PTM_INTERFACE_SUPPORT*/
+ 

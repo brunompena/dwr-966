@@ -1,0 +1,24 @@
+--- a/src/common/ifx_fifo.c
++++ b/src/common/ifx_fifo.c
+@@ -588,6 +588,21 @@ IFX_ulong_t* IFX_Var_Fifo_writeElement (
+       if (pFifo->pWrite >= pFifo->pRead &&
+          (elSizeUL + SIZE_HEADER + SIZE_TRAILER) > (IFX_ulong_t)(pFifo->pEnd - pFifo->pWrite))
+       {
++         /* check if we have enough room from the head */
++         if ((elSizeUL + SIZE_HEADER + SIZE_TRAILER) > (IFX_ulong_t)(pFifo->pRead - pFifo->pStart))
++         {
++            /* if FIFO is empty */
++            if (pFifo->pWrite == pFifo->pRead)
++            {
++               /* ... sync to FIFO start */
++               pFifo->pRead = pFifo->pStart;
++            }
++            else
++            {
++               IFXOS_SYSOBJECT_CLEAR_OWNER_THR_INFO(pFifo->pSysObject);
++               return IFX_NULL;
++            }
++         }
+          if ((pFifo->pEnd - pFifo->pWrite) >= SIZE_HEADER)
+          {
+             pFifo->pWrite[0] = (IFX_ulong_t)~0;

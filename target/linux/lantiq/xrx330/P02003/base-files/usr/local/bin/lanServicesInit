@@ -1,0 +1,13 @@
+#!/bin/sh
+
+#[ -e /usr/local/bin/webServerInit ] && webServerInit
+
+TELNET_EN=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select Enable_TELNET from RmtMgrConfig;"`
+if [ "$TELNET_EN" = "0" ]; then
+	/etc/init.d/telnetd stop
+fi
+#telnetd -p 6623
+
+#/etc/init.d/dropbear start
+
+/etc/init.d/ftpd stop

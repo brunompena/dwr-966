@@ -1,0 +1,134 @@
+menu "advanced configuration (for developers)"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+
+config VOICE_TAPI_LIB_COUNTRY_USER_FLAGS
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+        string "Additional CFLAGS"
+        default ""
+        help
+                Additional CFLAGS for compilation (for developers)
+
+config VOICE_TAPI_LIB_COUNTRY_USER_OPTIONS
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+        string "Additional autogen configure options"
+        default ""
+        help
+                Additional autogen configure options (for developers)
+endmenu
+
+menu "select countries"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+
+config  VOICE_TAPI_LIB_COUNTRY_AU
+	bool "Australia"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Australia
+
+config  VOICE_TAPI_LIB_COUNTRY_AT
+	bool "Austria"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Austria
+
+config  VOICE_TAPI_LIB_COUNTRY_BE
+	bool "Belgium"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Belgium
+
+config  VOICE_TAPI_LIB_COUNTRY_DK
+	bool "Denmark"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Denmark
+
+config  VOICE_TAPI_LIB_COUNTRY_FR
+	bool "France"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		France
+
+config  VOICE_TAPI_LIB_COUNTRY_DE
+	bool "Germany"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Germany
+
+config  VOICE_TAPI_LIB_COUNTRY_IT
+	bool "Italy"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Italy
+
+config  VOICE_TAPI_LIB_COUNTRY_NL
+	bool "Netherlands"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Netherlands
+
+config  VOICE_TAPI_LIB_COUNTRY_NO
+	bool "Norway"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Norway
+
+config  VOICE_TAPI_LIB_COUNTRY_PL
+	bool "Poland"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Poland
+
+config  VOICE_TAPI_LIB_COUNTRY_ES
+	bool "Spain"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Spain
+
+config  VOICE_TAPI_LIB_COUNTRY_SE
+	bool "Sweden"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Sweden
+
+config  VOICE_TAPI_LIB_COUNTRY_CH
+	bool "Switzerland"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		Switzerland
+
+config  VOICE_TAPI_LIB_COUNTRY_GB
+	bool "United Kingdom"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		United Kingdom
+
+config  VOICE_TAPI_LIB_COUNTRY_AE
+	bool "United Arabs Emirates"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		United Arabs Emirates
+
+config  VOICE_TAPI_LIB_COUNTRY_US
+	bool "United States of America"
+	depends on PACKAGE_ltq-voice-tapi-lib-country
+	default y
+	help
+		United States of America
+endmenu
+

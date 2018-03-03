@@ -1,0 +1,35 @@
+#!/bin/sh /etc/rc.common
+
+START=20
+STOP=20
+
+start() {
+	EWAN_SW=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select ethWan from ethWanSwitch;"`
+	INTERFACE=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select interfaceName from networkInterface where LogicalIfName = 'LAN1';"`
+	NATENABLE=`sqlite+ /tmp/system.db "select Enable from FirewallNatConfig;"`
+	
+	if [ "$NATENABLE" != "5" -a "${EWAN_SW}" = "1" ]; then # not bridge mode
+		switch_cli IFX_FLOW_REGISTER_SET nRegAddr=0xCCD nData=0x04
+		switch_cli IFX_ETHSW_VLAN_PORT_MEMBER_REMOVE nVId=501 nPortId=2
+		switch_cli IFX_ETHSW_VLAN_PORT_MEMBER_ADD nVId=502 nPortId=2
+		switch_cli IFX_ETHSW_VLAN_PORT_CFG_SET nPortId=2 nPortVId=502
+		ppacmd addwan -i eth1
+	fi
+
+	echo "WWAN init with MAL manager ..."
+
+	/etc/init.d/malmanager start 
+}
+
+stop() {
+	echo "WAN stop with lte_service ..."
+	
+	count=`pidof malmanager | wc -w`
+	if [ $count -ne 0 ]; then
+		lte_set -O 0x01
+		sleep 2
+	fi
+	
+	/usr/local/bin/lte_service.sh stop
+	echo 1 > /sys/class/leds/lte_rest/brightness
+}

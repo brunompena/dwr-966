@@ -1,0 +1,1 @@
+void RPCIMPL_SetupCallback();

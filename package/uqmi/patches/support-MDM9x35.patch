@@ -1,0 +1,439 @@
+From 89c109bcc550f332ba8577e9a772127ab97d8dbb Mon Sep 17 00:00:00 2001
+From: Steven Yu-Yu Hung <steven.hung@wnc.com.tw>
+Date: Thu, 20 Nov 2014 17:55:39 +0800
+Subject: [PATCH] support MDM9x35
+
+---
+ CMakeLists.txt            |   2 +-
+ commands-wds.c            |  24 +++++++++
+ commands-wds.h            |   1 +
+ commands.c                | 133 +++++++++++++++++++++++++++++++++++++---------
+ commands.h                |   2 +-
+ data/qmi-service-wds.json |  35 ++++++++++++
+ qmi-enums-wda.h           |  68 ++++++++++++++++++++++++
+ qmi-enums-wds.h           |  30 +++++++++++
+ qmi-message.h             |   3 ++
+ uqmi.h                    |   1 +
+ 10 files changed, 273 insertions(+), 26 deletions(-)
+ create mode 100644 qmi-enums-wda.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a09865f..b0283fd 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -20,7 +20,7 @@ ENDIF()
+ 
+ SET(service_headers)
+ SET(service_sources)
+-FOREACH(service ctl dms nas pds wds wms)
++FOREACH(service ctl dms nas pds wds wms wda)
+ 	ADD_CUSTOM_COMMAND(
+ 		OUTPUT qmi-message-${service}.h
+ 		COMMAND ./data/gen-header.pl ${service}_ ./data/qmi-service-${service}.json > qmi-message-${service}.h
+diff --git a/commands-wds.c b/commands-wds.c
+index c9c084e..fbad823 100644
+--- a/commands-wds.c
++++ b/commands-wds.c
+@@ -2,6 +2,30 @@
+ 
+ #include "qmi-message.h"
+ 
++#define cmd_wds_bind_mux_data_port_cb no_cb
++static enum qmi_cmd_result
++cmd_wds_bind_mux_data_port_prepare(struct qmi_dev *qmi, struct qmi_request *req, struct qmi_msg *msg, char *arg)
++{
++	struct qmi_wds_bind_mux_data_port_request sreq = {};
++	char *err;
++	int id;
++
++	id = strtoul(arg, &err, 10);
++	if (err && *err) {
++		uqmi_add_error("Invalid MUX ID");
++		return QMI_CMD_EXIT;
++	}
++
++	sreq.set.peripheral_end_point_id = 1;
++	sreq.data.peripheral_end_point_id.iface_id = 4;
++	sreq.data.peripheral_end_point_id.ep_type = QMI_WDS_DATA_EP_TYPE_HSUSB;
++	qmi_set(&sreq, mux_id, id);
++	qmi_set(&sreq, client_type, QMI_WDS_CLIENT_TYPE_TETHERED);
++
++	qmi_set_wds_bind_mux_data_port_request(msg, &sreq);
++	return QMI_CMD_REQUEST;
++}
++
+ static struct qmi_wds_start_network_request wds_sn_req = {
+ 	QMI_INIT(authentication_preference,
+ 	         QMI_WDS_AUTHENTICATION_PAP | QMI_WDS_AUTHENTICATION_CHAP),
+diff --git a/commands-wds.h b/commands-wds.h
+index 9f90998..a269bb3 100644
+--- a/commands-wds.h
++++ b/commands-wds.h
+@@ -1,4 +1,5 @@
+ #define __uqmi_wds_commands \
++	__uqmi_command(wds_bind_mux_data_port, bind-mux-data-port, required, QMI_SERVICE_WDS), \
+ 	__uqmi_command(wds_start_network, start-network, no, QMI_SERVICE_WDS), \
+ 	__uqmi_command(wds_set_apn, apn, required, CMD_TYPE_OPTION), \
+ 	__uqmi_command(wds_set_auth, auth-type, required, CMD_TYPE_OPTION), \
+diff --git a/commands.c b/commands.c
+index 198b6ab..ff4cf39 100644
+--- a/commands.c
++++ b/commands.c
+@@ -9,6 +9,9 @@
+ 
+ #include "uqmi.h"
+ #include "commands.h"
++#include <sys/ioctl.h>
++#include <net/if.h>
++#include <linux/msm_rmnet.h>
+ 
+ static struct blob_buf status;
+ bool single_line = false;
+@@ -99,40 +102,122 @@ cmd_set_client_id_prepare(struct qmi_dev *qmi, struct qmi_request *req, struct q
+ 	return QMI_CMD_DONE;
+ }
+ 
+-static int
+-qmi_get_array_idx(const char **array, int size, const char *str)
++static void cmd_wda_set_data_format_cb(struct qmi_dev *qmi, struct qmi_request *req, struct qmi_msg *msg)
+ {
+-	int i;
+-
+-	for (i = 0; i < size; i++) {
+-		if (!array[i])
+-			continue;
++	struct qmi_wda_set_data_format_response res;
++	void *c;
+ 
+-		if (!strcmp(array[i], str))
+-			return i;
+-	}
++	qmi_parse_wda_set_data_format_response(msg, &res);
+ 
+-	return -1;
++	c = blobmsg_open_table(&status, NULL);
++        if (res.set.link_layer_protocol)
++                blobmsg_add_u32(&status, "link_layer_protocol", res.data.link_layer_protocol);
++        if (res.set.uplink_data_aggregation_protocol)
++                blobmsg_add_u32(&status, "uplink_data_aggregation_protocol", res.data.uplink_data_aggregation_protocol);
++        if (res.set.downlink_data_aggregation_protocol)
++                blobmsg_add_u32(&status, "downlink_data_aggregation_protocol", res.data.downlink_data_aggregation_protocol);
++        if (res.set.downlink_data_aggregation_max_datagrams)
++                blobmsg_add_u32(&status, "downlink_data_aggregation_max_datagram", res.data.downlink_data_aggregation_max_datagrams);
++        if (res.set.downlink_data_aggregation_max_size)
++                blobmsg_add_u32(&status, "downlink_data_aggregation_max_size", res.data.downlink_data_aggregation_max_size);
++	blobmsg_close_table(&status, c);
+ }
+ 
+-#define cmd_ctl_set_data_format_cb no_cb
+ static enum qmi_cmd_result
+-cmd_ctl_set_data_format_prepare(struct qmi_dev *qmi, struct qmi_request *req, struct qmi_msg *msg, char *arg)
++cmd_wda_set_data_format_prepare(struct qmi_dev *qmi, struct qmi_request *req, struct qmi_msg *msg, char *arg)
+ {
+-	struct qmi_ctl_set_data_format_request sreq = {};
+-	const char *modes[] = {
+-		[QMI_CTL_DATA_LINK_PROTOCOL_802_3] = "802.3",
+-		[QMI_CTL_DATA_LINK_PROTOCOL_RAW_IP] = "raw-ip",
+-	};
+-	int mode = qmi_get_array_idx(modes, ARRAY_SIZE(modes), arg);
+-
+-	if (mode < 0) {
+-		uqmi_add_error("Invalid mode (modes: 802.3, raw-ip)");
++	struct qmi_wda_set_data_format_request sreq = {};
++	char *err;
++	unsigned int pkts;
++	int s;
++	struct ifreq ifr;
++	struct rmnet_ioctl_extended_s ext_ioctl;
++
++
++	pkts = strtoul(arg, &err, 10);
++	if (err && *err) {
++		uqmi_add_error("Invalid value");
+ 		return QMI_CMD_EXIT;
+ 	}
+ 
+-	qmi_set_ctl_set_data_format_request(msg, &sreq);
+-	return QMI_CMD_DONE;
++	if (pkts > 11) {
++		uqmi_add_error("Invalid value");
++		return QMI_CMD_EXIT;
++	}
++
++	if (pkts == 0) {
++		s = socket(AF_INET, SOCK_DGRAM, 0);
++		memset(&ifr, 0, sizeof(ifr));
++		strcpy(ifr.ifr_name, "rmnet_usb0");
++		ioctl(s, RMNET_IOCTL_SET_LLP_IP, &ifr);
++		memset(&ifr, 0, sizeof(ifr));
++		memset(&ext_ioctl, 0, sizeof(struct rmnet_ioctl_extended_s));
++		strcpy(ifr.ifr_name, "rmnet_usb0");
++		ifr.ifr_ifru.ifru_data = (void *) &ext_ioctl;
++		ext_ioctl.extended_ioctl = RMNET_IOCTL_SET_MRU;
++		ext_ioctl.u.data = 13568;
++		ioctl(s, RMNET_IOCTL_EXTENDED, &ifr);
++		close(s);
++
++		qmi_set(&sreq, link_layer_protocol, 2);
++		qmi_set(&sreq, uplink_data_aggregation_protocol, 5);
++		qmi_set(&sreq, downlink_data_aggregation_protocol, 5);
++		qmi_set(&sreq, downlink_data_aggregation_max_datagrams, 32);
++		qmi_set(&sreq, downlink_data_aggregation_max_size, 32768);
++	}
++	else if (pkts < 10) {
++		s = socket(AF_INET, SOCK_DGRAM, 0);
++		memset(&ifr, 0, sizeof(ifr));
++		strcpy(ifr.ifr_name, "rmnet_usb0");
++		ioctl(s, RMNET_IOCTL_SET_LLP_IP, &ifr);
++		memset(&ifr, 0, sizeof(ifr));
++		memset(&ext_ioctl, 0, sizeof(struct rmnet_ioctl_extended_s));
++		strcpy(ifr.ifr_name, "rmnet_usb0");
++		ifr.ifr_ifru.ifru_data = (void *) &ext_ioctl;
++		ext_ioctl.extended_ioctl = RMNET_IOCTL_SET_MRU;
++		ext_ioctl.u.data = 1504 * pkts;
++		ioctl(s, RMNET_IOCTL_EXTENDED, &ifr);
++		close(s);
++
++		qmi_set(&sreq, link_layer_protocol, 2);
++		qmi_set(&sreq, uplink_data_aggregation_protocol, 5);
++		qmi_set(&sreq, downlink_data_aggregation_protocol, 5);
++		qmi_set(&sreq, downlink_data_aggregation_max_datagrams, pkts);
++		qmi_set(&sreq, downlink_data_aggregation_max_size, 1504 * pkts);
++	}
++	if (pkts == 10) {
++		s = socket(AF_INET, SOCK_DGRAM, 0);
++		memset(&ifr, 0, sizeof(ifr));
++		strcpy(ifr.ifr_name, "rmnet_usb0");
++		ioctl(s, RMNET_IOCTL_SET_LLP_ETHERNET, &ifr);
++		memset(&ifr, 0, sizeof(ifr));
++		memset(&ext_ioctl, 0, sizeof(struct rmnet_ioctl_extended_s));
++		strcpy(ifr.ifr_name, "rmnet_usb0");
++		ifr.ifr_ifru.ifru_data = (void *) &ext_ioctl;
++		ext_ioctl.extended_ioctl = RMNET_IOCTL_SET_MRU;
++		ext_ioctl.u.data = 1514;
++		ioctl(s, RMNET_IOCTL_EXTENDED, &ifr);
++		close(s);
++		qmi_set(&sreq, link_layer_protocol, 1);
++	}
++	if (pkts == 11) {
++		s = socket(AF_INET, SOCK_DGRAM, 0);
++		memset(&ifr, 0, sizeof(ifr));
++		strcpy(ifr.ifr_name, "rmnet_usb0");
++		ioctl(s, RMNET_IOCTL_SET_LLP_IP, &ifr);
++		memset(&ifr, 0, sizeof(ifr));
++		memset(&ext_ioctl, 0, sizeof(struct rmnet_ioctl_extended_s));
++		strcpy(ifr.ifr_name, "rmnet_usb0");
++		ifr.ifr_ifru.ifru_data = (void *) &ext_ioctl;
++		ext_ioctl.extended_ioctl = RMNET_IOCTL_SET_MRU;
++		ext_ioctl.u.data = 1500;
++		ioctl(s, RMNET_IOCTL_EXTENDED, &ifr);
++		close(s);
++
++		qmi_set(&sreq, link_layer_protocol, 2);
++	}
++	qmi_set_wda_set_data_format_request(msg, &sreq);
++	return QMI_CMD_REQUEST;
+ }
+ 
+ #include "commands-wds.c"
+diff --git a/commands.h b/commands.h
+index 9d492e7..309b488 100644
+--- a/commands.h
++++ b/commands.h
+@@ -34,7 +34,7 @@ struct uqmi_cmd {
+ 	__uqmi_command(version, get-versions, no, QMI_SERVICE_CTL), \
+ 	__uqmi_command(set_client_id, set-client-id, required, CMD_TYPE_OPTION), \
+ 	__uqmi_command(get_client_id, get-client-id, required, QMI_SERVICE_CTL), \
+-	__uqmi_command(ctl_set_data_format, set-data-format, required, QMI_SERVICE_CTL), \
++	__uqmi_command(wda_set_data_format, set-data-format, required, QMI_SERVICE_WDA), \
+ 	__uqmi_wds_commands, \
+ 	__uqmi_dms_commands, \
+ 	__uqmi_nas_commands, \
+diff --git a/data/qmi-service-wds.json b/data/qmi-service-wds.json
+index ab48e8a..4a91839 100644
+--- a/data/qmi-service-wds.json
++++ b/data/qmi-service-wds.json
+@@ -1064,6 +1064,41 @@
+                       "type"          : "TLV",
+                       "format"        : "guint8",
+                       "public-format" : "gboolean" } ],
++     "output"  : [  { "common-ref" : "Operation Result" } ] },
++
++  // *********************************************************************************
++  {  "name"    : "Bind Mux Data Port",
++     "type"    : "Message",
++     "service" : "WDS",
++     "id"      : "0x00A2",
++     "version" : "1.0",
++     "input"   : [  { "name"      : "Peripheral End Point ID",
++                      "id"        : "0x10",
++                      "mandatory" : "no",
++                      "type"      : "TLV",
++                      "format"    : "sequence",
++                      "contents"  : [ { "name"   : "Ep Type",
++                                        "format" : "guint32",
++                                        "public-format" : "QmiWdsPeripheralEpType" },
++                                      { "name"   : "Iface Id",
++                                        "format"    : "guint32" } ] },
++                    { "name"      : "Mux ID",
++                      "id"        : "0x11",
++                      "mandatory" : "no",
++                      "type"      : "TLV",
++                      "format"    : "guint8" },
++                    { "name"      : "Reversed",
++                      "id"        : "0x12",
++                      "mandatory" : "no",
++                      "type"      : "TLV",
++                      "format"    : "guint8" },
++                    { "name"      : "Client Type",
++                      "id"        : "0x13",
++                      "mandatory" : "no",
++                      "type"      : "TLV",
++                      "format"    : "guint32",
++                      "public-format" : "QmiWdsClientType" } ],
+      "output"  : [  { "common-ref" : "Operation Result" } ] }
+ 
++
+ ]
+diff --git a/qmi-enums-wda.h b/qmi-enums-wda.h
+new file mode 100644
+index 0000000..0b65fb8
+--- /dev/null
++++ b/qmi-enums-wda.h
+@@ -0,0 +1,68 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * uqmi -- tiny QMI support implementation
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
++ * Boston, MA 02110-1301 USA.
++ *
++ * Copyright (C) 2014 Aleksander Morgado <aleksander@aleksander.es>
++ */
++
++#ifndef _LIBQMI_GLIB_QMI_ENUMS_WDA_H_
++#define _LIBQMI_GLIB_QMI_ENUMS_WDA_H_
++
++/**
++ * SECTION: qmi-enums-wda
++ * @title: WDA enumerations and flags
++ *
++ * This section defines enumerations and flags used in the WDA service
++ * interface.
++ */
++
++/**
++ * QmiWdaLinkLayerProtocol:
++ * @QMI_WDA_LINK_LAYER_PROTOCOL_UNKNOWN: Unknown.
++ * @QMI_WDA_LINK_LAYER_PROTOCOL_802_3: 802.3 ethernet mode.
++ * @QMI_WDA_LINK_LAYER_PROTOCOL_RAW_IP: Raw IP mode.
++ *
++ * Link layer protocol.
++ */
++typedef enum {
++    QMI_WDA_LINK_LAYER_PROTOCOL_UNKNOWN = 0x00,
++    QMI_WDA_LINK_LAYER_PROTOCOL_802_3   = 0x01,
++    QMI_WDA_LINK_LAYER_PROTOCOL_RAW_IP  = 0x02,
++} QmiWdaLinkLayerProtocol;
++
++/**
++ * QmiWdaDataAggregationProtocol:
++ * @QMI_WDA_DATA_AGGREGATION_PROTOCOL_DISABLED: Disabled.
++ * @QMI_WDA_DATA_AGGREGATION_PROTOCOL_TLP: TLP enabled.
++ * @QMI_WDA_DATA_AGGREGATION_PROTOCOL_QC_NCM: QC NCM enabled.
++ * @QMI_WDA_DATA_AGGREGATION_PROTOCOL_MBIM: MBIM enabled.
++ * @QMI_WDA_DATA_AGGREGATION_PROTOCOL_RNDIS: RNDIS enabled.
++ * @QMI_WDA_DATA_AGGREGATION_PROTOCOL_QMAP: QMAP enabled.
++ *
++ * Data aggregation protocol in uplink or downlink.
++ */
++typedef enum {
++    QMI_WDA_DATA_AGGREGATION_PROTOCOL_DISABLED = 0x00,
++    QMI_WDA_DATA_AGGREGATION_PROTOCOL_TLP      = 0x01,
++    QMI_WDA_DATA_AGGREGATION_PROTOCOL_QC_NCM   = 0x02,
++    QMI_WDA_DATA_AGGREGATION_PROTOCOL_MBIM     = 0x03,
++    QMI_WDA_DATA_AGGREGATION_PROTOCOL_RNDIS    = 0x04,
++    QMI_WDA_DATA_AGGREGATION_PROTOCOL_QMAP     = 0x05,
++} QmiWdaDataAggregationProtocol;
++
++#endif /* _LIBQMI_GLIB_QMI_ENUMS_WDA_H_ */
+diff --git a/qmi-enums-wds.h b/qmi-enums-wds.h
+index 6af5936..cd856d4 100644
+--- a/qmi-enums-wds.h
++++ b/qmi-enums-wds.h
+@@ -1014,4 +1014,34 @@ typedef enum {
+     QMI_WDS_AUTOCONNECT_PAUSED                           = 2,
+ } QmiWdsAutoconnectSetting;
+ 
++/**
++ * QmiWdsPeripheralEpType:
++ * @QMI_WDS_DATA_EP_TYPE_RESERVED: Reserved
++ * @QMI_WDS_DATA_EP_TYPE_HSIC: HSIC
++ * @QMI_WDS_DATA_EP_TYPE_HSUSB: HSUSB
++ * @QMI_WDS_DATA_EP_TYPE_PCIE: PCIE
++ * @QMI_WDS_DATA_EP_TYPE_EMBEDDED: Embedded
++ *
++ * Peripheral end point type
++ */
++typedef enum {
++  QMI_WDS_DATA_EP_TYPE_RESERVED   = 0x00,
++  QMI_WDS_DATA_EP_TYPE_HSIC      = 0x01,
++  QMI_WDS_DATA_EP_TYPE_HSUSB   = 0x02,
++  QMI_WDS_DATA_EP_TYPE_PCIE   = 0x03,
++  QMI_WDS_DATA_EP_TYPE_EMBEDDED   = 0x04,
++} QmiWdsPeripheralEpType;
++
++/**
++ * QmiWdsPeripheralEpType:
++ * @QMI_WDS_CLIENT_TYPE_RESERVED: Reserved
++ * @QMI_WDS_CLIENT_TYPE_TETHERED: Tethered
++ *
++ * Peripheral end point type
++ */
++typedef enum {
++  QMI_WDS_CLIENT_TYPE_RESERVED   = 0x00,
++  QMI_WDS_CLIENT_TYPE_TETHERED   = 0x01,
++} QmiWdsClientType;
++
+ #endif /* _LIBQMI_GLIB_QMI_ENUMS_WDS_H_ */
+diff --git a/qmi-message.h b/qmi-message.h
+index 4ba8e5c..d63ee82 100644
+--- a/qmi-message.h
++++ b/qmi-message.h
+@@ -27,6 +27,9 @@
+ #include "qmi-enums-wms.h"
+ #include "qmi-message-wms.h"
+ 
++#include "qmi-enums-wda.h"
++#include "qmi-message-wda.h"
++
+ #define qmi_set(_data, _field, _val) \
+ 	do { \
+ 		(_data)->set._field = 1; \
+diff --git a/uqmi.h b/uqmi.h
+index de212fc..dca1871 100644
+--- a/uqmi.h
++++ b/uqmi.h
+@@ -33,6 +33,7 @@ static inline void dump_packet(const char *prefix, void *ptr, int len)
+     __qmi_service(QMI_SERVICE_SAR), \
+     __qmi_service(QMI_SERVICE_RMTFS), \
+     __qmi_service(QMI_SERVICE_CAT), \
++    __qmi_service(QMI_SERVICE_WDA), \
+     __qmi_service(QMI_SERVICE_RMS), \
+     __qmi_service(QMI_SERVICE_OMA)
+ 
+-- 
+1.8.1.2
+

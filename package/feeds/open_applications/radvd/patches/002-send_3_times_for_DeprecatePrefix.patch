@@ -1,0 +1,24 @@
+--- radvd-1.8.3.old/radvd.c	2011-10-06 18:52:20.000000000 +0800
++++ radvd-1.8.3/radvd.c	2015-03-06 10:39:23.810195000 +0800
+@@ -535,6 +535,7 @@
+ stop_adverts(void)
+ {
+ 	struct Interface *iface;
++	int i = 0;
+ 
+ 	/*
+ 	 *	send final RA (a SHOULD in RFC4861 section 6.2.5)
+@@ -545,7 +546,12 @@
+ 			if (iface->AdvSendAdvert) {
+ 				/* send a final advertisement with zero Router Lifetime */
+ 				iface->cease_adv = 1;
+-				send_ra_forall(iface, NULL);
++				/* send 3 times requested by telenor */
++				for(i=0;i<MAX_FINAL_RTR_ADVERTISEMENTS;i++)
++				{	
++					send_ra_forall(iface, NULL);
++					//sleep(1);
++				}
+ 			}
+ 		}
+ 	}

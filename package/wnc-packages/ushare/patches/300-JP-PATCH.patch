@@ -1,0 +1,351 @@
+diff -ruN ushare-1.1a_org/src/cds.c ushare-1.1a/src/cds.c
+--- ushare-1.1a_org/src/cds.c	2015-04-01 13:35:33.994088149 +0800
++++ ushare-1.1a/src/cds.c	2015-04-01 13:37:25.596995255 +0800
+@@ -34,6 +34,11 @@
+ #include "buffer.h"
+ #include "minmax.h"
+ 
++#define _JP_PATCH_
++#ifdef _JP_PATCH_
++#include "trace.h"
++#endif
++
+ /* Represent the CDS GetSearchCapabilities action. */
+ #define SERVICE_CDS_ACTION_SEARCH_CAPS "GetSearchCapabilities"
+ 
+@@ -128,6 +133,11 @@
+ /* Represent the CDS DIDL Message Item Title value. */
+ #define DIDL_ITEM_TITLE "dc:title"
+ 
++#ifdef _JP_PATCH_
++/* Represent the CDS DIDL Message Item Creator value. */
++#define DIDL_ITEM_CREATOR "dc:creator"
++#endif
++
+ /* Represent the CDS DIDL Message Item Resource value. */
+ #define DIDL_RES "res"
+ 
+@@ -161,6 +171,11 @@
+ /* Represent the CDS DIDL Message Container Title value. */
+ #define DIDL_CONTAINER_TITLE "dc:title"
+ 
++#ifdef _JP_PATCH_
++/* Represent the CDS DIDL Message Container Creator value. */
++#define DIDL_CONTAINER_CREATOR "dc:creator"
++#endif
++
+ /* Represent the "upnp:class" reserved keyword for Search action */
+ #define SEARCH_CLASS_MATCH_KEYWORD "(upnp:class = \""
+ 
+@@ -285,6 +300,18 @@
+   didl_add_tag (out, DIDL_ITEM_CLASS, class);
+   didl_add_tag (out, DIDL_ITEM_TITLE, title);
+ 
++#ifdef _JP_PATCH_
++  //log_info ("protocol_info=%s\n", protocol_info);
++  
++  if (strcmp (protocol_info, "http-get:*:video/x-msvideo:*")==0)
++  {
++
++	log_info ("add creator tag\n");
++	
++  	didl_add_tag (out, DIDL_ITEM_CREATOR, "DiVX");
++  }
++#endif
++
+   if (filter_has_val (filter, DIDL_RES))
+   {
+     buffer_appendf (out, "<%s", DIDL_RES);
+@@ -321,7 +348,9 @@
+ 
+   didl_add_tag (out, DIDL_CONTAINER_CLASS, class);
+   didl_add_tag (out, DIDL_CONTAINER_TITLE, title);
+-
++#ifdef _JP_PATCH_  
++  //log_info ("add container title=%s\n", title);
++#endif  
+   buffer_appendf (out, "</%s>", DIDL_CONTAINER);
+ }
+ 
+diff -ruN ushare-1.1a_org/src/http.c ushare-1.1a/src/http.c
+--- ushare-1.1a_org/src/http.c	2015-04-01 13:35:33.994088149 +0800
++++ ushare-1.1a/src/http.c	2015-04-01 13:36:16.002089166 +0800
+@@ -25,7 +25,6 @@
+ #include <errno.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+-#include <string.h>
+ #include <unistd.h>
+ #include <errno.h>
+ 
+@@ -78,7 +77,8 @@
+   info->content_type = ixmlCloneDOMString (content_type);
+ }
+ 
+-int http_get_info (const char *filename, struct File_Info *info)
++static int
++http_get_info (const char *filename, struct File_Info *info)
+ {
+   extern struct ushare_t *ut;
+   struct upnp_entry_t *entry = NULL;
+@@ -197,7 +197,8 @@
+   return ((UpnpWebFileHandle) file);
+ }
+ 
+-UpnpWebFileHandle http_open (const char *filename, enum UpnpOpenFileMode mode)
++static UpnpWebFileHandle
++http_open (const char *filename, enum UpnpOpenFileMode mode)
+ {
+   extern struct ushare_t *ut;
+   struct upnp_entry_t *entry = NULL;
+@@ -250,7 +251,8 @@
+   return ((UpnpWebFileHandle) file);
+ }
+ 
+-int http_read (UpnpWebFileHandle fh, char *buf, size_t buflen)
++static int
++http_read (UpnpWebFileHandle fh, char *buf, size_t buflen)
+ {
+   struct web_file_t *file = (struct web_file_t *) fh;
+   ssize_t len = -1;
+@@ -284,7 +286,8 @@
+   return len;
+ }
+ 
+-int http_write (UpnpWebFileHandle fh __attribute__((unused)),
++static int
++http_write (UpnpWebFileHandle fh __attribute__((unused)),
+             char *buf __attribute__((unused)),
+             size_t buflen __attribute__((unused)))
+ {
+@@ -293,7 +296,8 @@
+   return 0;
+ }
+ 
+-int http_seek (UpnpWebFileHandle fh, off_t offset, int origin)
++static int
++http_seek (UpnpWebFileHandle fh, off_t offset, int origin)
+ {
+   struct web_file_t *file = (struct web_file_t *) fh;
+   off_t newpos = -1;
+@@ -367,7 +371,8 @@
+   return 0;
+ }
+ 
+-int http_close (UpnpWebFileHandle fh)
++static int
++http_close (UpnpWebFileHandle fh)
+ {
+   struct web_file_t *file = (struct web_file_t *) fh;
+ 
+@@ -397,3 +402,13 @@
+ 
+   return 0;
+ }
++
++struct UpnpVirtualDirCallbacks virtual_dir_callbacks =
++  {
++    http_get_info,
++    http_open,
++    http_read,
++    http_write,
++    http_seek,
++    http_close
++  };
+diff -ruN ushare-1.1a_org/src/http.h ushare-1.1a/src/http.h
+--- ushare-1.1a_org/src/http.h	2015-04-01 13:35:33.994088149 +0800
++++ ushare-1.1a/src/http.h	2015-04-01 13:36:16.006088943 +0800
+@@ -25,18 +25,6 @@
+ #include <upnp/upnp.h>
+ #include <upnp/upnptools.h>
+ 
+-int http_get_info (const char *filename, struct File_Info *info);
+-
+-UpnpWebFileHandle http_open (const char *filename, enum UpnpOpenFileMode mode);
+-
+-int http_read (UpnpWebFileHandle fh, char *buf, size_t buflen);
+-
+-int http_seek (UpnpWebFileHandle fh, off_t offset, int origin);
+-
+-int http_write (UpnpWebFileHandle fh __attribute__((unused)),
+-	char *buf __attribute__((unused)),
+-	size_t buflen __attribute__((unused)));
+-
+-int http_close (UpnpWebFileHandle fh);
++struct UpnpVirtualDirCallbacks virtual_dir_callbacks;
+ 
+ #endif /* _HTTP_H_ */
+diff -ruN ushare-1.1a_org/src/trace.c ushare-1.1a/src/trace.c
+--- ushare-1.1a_org/src/trace.c	2007-12-09 21:03:36.000000000 +0800
++++ ushare-1.1a/src/trace.c	2015-04-01 13:36:16.006088943 +0800
+@@ -45,9 +45,15 @@
+   va_start (va, format);
+   if (is_daemon)
+   {
+-    int flags = LOG_DAEMON;
+-    flags |= level == ULOG_ERROR ? LOG_ERR : LOG_NOTICE;
+-    vsyslog (flags, format, va);
++	#ifdef _JP_PATCH_	
++	    int flags = LOG_LOCAL4;
++	    flags |= level == ULOG_ERROR ? LOG_ERR : LOG_NOTICE;
++		vsyslog (flags, format, va);		
++	#else
++		int flags = LOG_DAEMON;
++		flags |= level == ULOG_ERROR ? LOG_ERR : LOG_NOTICE;	
++		vsyslog (flags, format, va);	
++	#endif	
+   }
+   else
+   {
+@@ -60,5 +66,9 @@
+ inline void
+ start_log (void)
+ {
++#ifdef _JP_PATCH_	
++  openlog ("[DLNA]", LOG_PID, LOG_LOCAL4);
++#else
+   openlog (PACKAGE_NAME, LOG_PID, LOG_DAEMON);
++#endif
+ }
+diff -ruN ushare-1.1a_org/src/ushare.c ushare-1.1a/src/ushare.c
+--- ushare-1.1a_org/src/ushare.c	2015-04-01 13:35:33.994088149 +0800
++++ ushare-1.1a/src/ushare.c	2015-04-01 13:39:14.373584119 +0800
+@@ -187,8 +187,11 @@
+ 
+   if (strcmp (request->DevUDN + 5, ut->udn))
+     return;
+-
++#ifdef _JP_PATCH_
+   ip = (*(struct sockaddr_in *)&request->CtrlPtIPAddr).sin_addr.s_addr;
++#else
++  ip = request->CtrlPtIPAddr.s_addr;
++#endif
+   ip = ntohl (ip);
+   sprintf (val, "%d.%d.%d.%d",
+            (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
+@@ -343,29 +346,24 @@
+ #endif /* HAVE_DLNA */
+   
+   ut->port = UpnpGetServerPort();
++#ifdef _JP_PATCH_
++  log_info("cutepig ut->port = %d\n", ut->port);
++#endif
+   log_info (_("UPnP MediaServer listening on %s:%d\n"),
+             UpnpGetServerIpAddress (), ut->port);
+ 
+   UpnpEnableWebserver (TRUE);
+ 
+-#define upnp_set_callback(cb, func) \
+-  do {                                                            \
+-    res = UpnpVirtualDir_set_##cb##Callback(func);                \
+-    if (res != UPNP_E_SUCCESS)                                    \
+-    {                                                             \
+-      log_error (_("Cannot set virtual directory callbacks\n"));  \
+-      free (description);                                         \
+-      return -1;                                                  \
+-    }                                                             \
+-  } while(0)
+-
+-  upnp_set_callback(GetInfo, http_get_info);
+-  upnp_set_callback(Open,    http_open);
+-  upnp_set_callback(Read,    http_read);
+-  upnp_set_callback(Seek,    http_seek);
+-  upnp_set_callback(Write,   http_write);
+-  upnp_set_callback(Close,   http_close);
+-
++  res = UpnpSetVirtualDirCallbacks (&virtual_dir_callbacks);
++  if (res != UPNP_E_SUCCESS)
++  {
++    log_error (_("Cannot set virtual directory callbacks\n"));
++    free (description);
++    return -1;
++  }
++#ifdef _JP_PATCH_ 
++  log_info("cutepig VIRTUAL_DIR = %s\n", VIRTUAL_DIR);
++#endif
+   res = UpnpAddVirtualDir (VIRTUAL_DIR);
+   if (res != UPNP_E_SUCCESS)
+   {
+@@ -731,10 +729,17 @@
+ inline void
+ display_headers (void)
+ {
+-  printf (_("%s (version %s), a lightweight UPnP A/V and DLNA Media Server.\n"),
+-          PACKAGE_NAME, VERSION);
+-  printf (_("Benjamin Zores (C) 2005-2007, for GeeXboX Team.\n"));
+-  printf (_("See http://ushare.geexbox.org/ for updates.\n"));
++#ifdef _JP_PATCH_
++	log_info (_("%s (version %s), a lightweight UPnP A/V and DLNA Media Server.\n"),
++		PACKAGE_NAME, VERSION);
++	log_info (_("Benjamin Zores (C) 2005-2007, for GeeXboX Team.\n"));
++	log_info (_("See http://ushare.geexbox.org/ for updates.\n"));	
++#else
++	printf (_("%s (version %s), a lightweight UPnP A/V and DLNA Media Server.\n"),
++	      PACKAGE_NAME, VERSION);
++	printf (_("Benjamin Zores (C) 2005-2007, for GeeXboX Team.\n"));
++	printf (_("See http://ushare.geexbox.org/ for updates.\n"));
++#endif
+ }
+ 
+ inline static void
+@@ -766,6 +771,22 @@
+   ushare_signal_exit ();
+ }
+ 
++#ifdef _JP_PATCH_
++void refresh_list_handler(int signo)
++{    
++	log_info (_("refresh_list_handler\n"));	
++	pthread_mutex_lock (&ut->termination_mutex);
++	log_info (_("building list start +++\n"));
++	if (ut!=NULL && ut->contentlist)
++	{
++	    free_metadata_list (ut);
++	    build_metadata_list (ut);	
++	}	   
++	log_info (_("building list end ---\n"));
++	pthread_mutex_unlock(&ut->termination_mutex);
++}
++#endif
++
+ int
+ main (int argc, char **argv)
+ {
+@@ -855,6 +876,9 @@
+ 
+   signal (SIGINT, UPnPBreak);
+   signal (SIGHUP, reload_config);
++#ifdef _JP_PATCH_
++  signal (SIGUSR1, refresh_list_handler);
++#endif
+ 
+   if (ut->use_telnet)
+   {
+diff -ruN ushare-1.1a_org/src/ushare.h ushare-1.1a/src/ushare.h
+--- ushare-1.1a_org/src/ushare.h	2007-12-09 21:03:36.000000000 +0800
++++ ushare-1.1a/src/ushare.h	2015-04-01 13:36:16.006088943 +0800
+@@ -26,6 +26,7 @@
+ #include <upnp/upnptools.h>
+ #include <stdbool.h>
+ #include <pthread.h>
++#define _JP_PATCH_
+ 
+ #ifdef HAVE_DLNA
+ #include <dlna.h>
+@@ -53,7 +54,7 @@
+ "  </specVersion>" \
+ "  <device>" \
+ "    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>" \
+-"    <friendlyName>%s: 1</friendlyName>" \
++"    <friendlyName>%s</friendlyName>" \
+ "    <manufacturer>GeeXboX Team</manufacturer>" \
+ "    <manufacturerURL>http://ushare.geexbox.org/</manufacturerURL>" \
+ "    <modelDescription>GeeXboX uShare : UPnP Media Server</modelDescription>" \
+@@ -85,7 +86,6 @@
+ "        <eventSubURL>/web/msr_event</eventSubURL>" \
+ "      </service>\n" \
+ "    </serviceList>" \
+-"    <presentationURL>/web/ushare.html</presentationURL>" \
+ "  </device>" \
+ "</root>"
+ 

@@ -1,0 +1,9 @@
+#!/bin/sh /etc/rc.common
+
+START=20
+
+start() {
+	/etc/init.d/iptables start 
+	/etc/init.d/ip6tables start 
+	/etc/init.d/lan_services_bringup.sh start &
+}

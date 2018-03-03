@@ -1,0 +1,65 @@
+--- a/src/lib_cli_core.c
++++ b/src/lib_cli_core.c
+@@ -677,7 +677,7 @@ CLI_STATIC int cmd_parse_execute(
+ 					p_arg, p_file);
+ 			else
+ 				return clios_fprintf(p_file,
+-					"errorcode=-1 (internal error, no function pointer)");
++					"errorcode=-1 (internal error, no function pointer)" CLI_CRLF);
+ #			else
+ 			CLI_USR_ERR(LIB_CLI,
+ 				("ERR CLI Core: parse & exec - file printout not supported" CLI_CRLF));
+@@ -693,7 +693,7 @@ CLI_STATIC int cmd_parse_execute(
+ 		{
+ 		case cli_cmd_core_out_mode_buffer:
+ #			if (CLI_SUPPORT_BUFFER_OUT == 1)
+-			return clios_sprintf(p_cmd_arg_buf, "errorcode=-1 (unknown command)");
++			return clios_sprintf(p_cmd_arg_buf, "errorcode=-1 (unknown command)" CLI_CRLF);
+ #			else
+ 			CLI_USR_ERR(LIB_CLI,
+ 				("ERR CLI Core: parse & exec - unknown command, buffer printout not supported" CLI_CRLF));
+@@ -701,7 +701,7 @@ CLI_STATIC int cmd_parse_execute(
+ #			endif
+ 		case cli_cmd_core_out_mode_file:
+ #			if (CLI_SUPPORT_FILE_OUT == 1)
+-			return clios_sprintf(p_cmd_arg_buf, "errorcode=-1 (unknown command)");
++			return clios_sprintf(p_cmd_arg_buf, "errorcode=-1 (unknown command)" CLI_CRLF);
+ #			else
+ 			CLI_USR_ERR(LIB_CLI,
+ 				("ERR CLI Core: parse & exec - unknown command, file printout not supported" CLI_CRLF));
+@@ -837,7 +837,7 @@ CLI_STATIC void cmd_core_tree_print__fil
+ 					*p_out_size += (unsigned int)fill_char;
+ 				}
+ 				ret = clios_fprintf(p_file,
+-					"%s\n", p_node->cmd_data.help);
++					"%s" CLI_CRLF, p_node->cmd_data.help);
+ 				if (ret > 0)
+ 					*p_out_size += (unsigned int)ret;
+ 			}
+@@ -1901,7 +1901,7 @@ int cli_core_cmd_arg_exec__file(
+ 					p_arg, p_file);
+ 			else
+ 				return clios_fprintf(p_file,
+-					"errorcode=-1 (internal error, no function pointer)");
++					"errorcode=-1 (internal error, no function pointer)" CLI_CRLF);
+ #			else
+ 			CLI_USR_ERR(LIB_CLI,
+ 				("ERR CLI Core: exec - file printout not supported" CLI_CRLF));
+@@ -1917,7 +1917,7 @@ int cli_core_cmd_arg_exec__file(
+ 		{
+ 		case cli_cmd_core_out_mode_buffer:
+ #			if (CLI_SUPPORT_BUFFER_OUT == 1) && 0
+-			return clios_sprintf(p_cmd_buf, "errorcode=-1 (unknown command)");
++			return clios_sprintf(p_cmd_buf, "errorcode=-1 (unknown command)" CLI_CRLF);
+ #			else
+ 			CLI_USR_ERR(LIB_CLI,
+ 				("ERR CLI Core: exec - unknown command, printout mode not supported" CLI_CRLF));
+@@ -1925,7 +1925,7 @@ int cli_core_cmd_arg_exec__file(
+ #			endif
+ 		case cli_cmd_core_out_mode_file:
+ #			if (CLI_SUPPORT_FILE_OUT == 1)
+-			return clios_fprintf(p_file, "errorcode=-1 (unknown command)");
++			return clios_fprintf(p_file, "errorcode=-1 (unknown command)" CLI_CRLF);
+ #			else
+ 			CLI_USR_ERR(LIB_CLI,
+ 				("ERR CLI Core: exec - unknown command, printout mode not supported" CLI_CRLF));

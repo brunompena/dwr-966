@@ -1,0 +1,13 @@
+#! /bin/sh
+
+# clear ifconfig
+ifconfig $1 0.0.0.0
+
+# clear routing table
+route del default $1
+
+adv_route stop $1
+
+rm /tmp/dhcpc_$1.result
+
+adv_dns $1

@@ -1,0 +1,118 @@
+# HG changeset patch
+# Parent e8ed50f585faa622633bdcad78778915ee8f84f1
+
+diff --git a/include/net/netfilter/nf_conntrack.h b/include/net/netfilter/nf_conntrack.h
+--- a/include/net/netfilter/nf_conntrack.h
++++ b/include/net/netfilter/nf_conntrack.h
+@@ -308,6 +308,11 @@
+ extern unsigned int nf_conntrack_hash_rnd;
+ void init_nf_conntrack_hash_rnd(void);
+ 
++#if defined(CONFIG_LTQ_PPA_API_SW_FASTPATH)
++int get_conntrack_from_skb(struct sk_buff *skb, struct nf_conn **nfct, u_int8_t *set_reply);
++#endif
++
++
+ #define NF_CT_STAT_INC(net, count)	  __this_cpu_inc((net)->ct.stat->count)
+ #define NF_CT_STAT_INC_ATOMIC(net, count) this_cpu_inc((net)->ct.stat->count)
+ 
+diff --git a/net/core/dev.c b/net/core/dev.c
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -2904,6 +2904,10 @@
+ 	__raise_softirq_irqoff(NET_RX_SOFTIRQ);
+ }
+ 
++#if defined(CONFIG_LTQ_PPA_API_SW_FASTPATH)
++extern int32_t (*ppa_sw_fastpath_send_hook)(struct sk_buff *skb);
++#endif
++
+ #ifdef CONFIG_RPS
+ 
+ /* One global table that all flow-based protocols share. */
+@@ -3196,6 +3200,15 @@
+ 	net_timestamp_check(netdev_tstamp_prequeue, skb);
+ 
+ 	trace_netif_rx(skb);
++
++#if defined(CONFIG_LTQ_PPA_API_SW_FASTPATH)
++        if(ppa_sw_fastpath_send_hook!=NULL) {
++                if(ppa_sw_fastpath_send_hook(skb) == 0)
++                        return NET_RX_SUCCESS;
++        }
++#endif
++
++
+ #ifdef CONFIG_RPS
+ 	if (static_key_false(&rps_needed)) {
+ 		struct rps_dev_flow voidflow, *rflow = &voidflow;
+diff --git a/net/netfilter/nf_conntrack_core.c b/net/netfilter/nf_conntrack_core.c
+--- a/net/netfilter/nf_conntrack_core.c
++++ b/net/netfilter/nf_conntrack_core.c
+@@ -979,6 +979,66 @@
+ 	return ct;
+ }
+ 
++#if defined(CONFIG_LTQ_PPA_API_SW_FASTPATH)
++int get_conntrack_from_skb(struct sk_buff *skb, struct nf_conn **nfct, u_int8_t *set_reply)
++{
++
++	u_int8_t protonum,pf=PF_INET;
++	int ret=1;
++	unsigned int dataoff;
++	enum ip_conntrack_info ctinfo;
++        struct nf_conn *ct, *tmpl = NULL; 
++	struct nf_conntrack_tuple tuple;
++	struct nf_conntrack_tuple_hash *h;
++        struct nf_conntrack_l3proto *l3proto;
++	struct nf_conntrack_l4proto *l4proto;
++        struct net_device *netdev=skb->dev;
++        skb->network_header = skb->data;
++        u16 zone;
++ 
++	if (skb->nfct) {
++		tmpl = (struct nf_conn *)skb->nfct;
++	}
++	zone = tmpl ? nf_ct_zone(tmpl) : NF_CT_DEFAULT_ZONE;
++ 
++	l3proto = __nf_ct_l3proto_find(pf);
++	ret = l3proto->get_l4proto(skb, 0, &dataoff, &protonum);
++	if (ret <= 0) {
++		return ret;
++        }
++
++	l4proto = __nf_ct_l4proto_find(pf, protonum);
++	if (l4proto->error != NULL) {
++		ret = l4proto->error(dev_net(netdev), tmpl, skb, 
++			dataoff, &ctinfo, pf, NF_INET_PRE_ROUTING);
++		if (ret <= 0) {
++			return ret;
++		}
++	}
++
++	if (!nf_ct_get_tuple(skb, skb_network_offset(skb),
++			     dataoff, AF_INET, protonum, &tuple, l3proto,
++			     l4proto)) {
++		pr_debug("Can't get tuple\n");
++		return -1;
++	}
++
++	h = nf_conntrack_find_get(dev_net(netdev), zone, &tuple);
++	if (!h) {
++		pr_debug("Can't get ct from tuple\n");
++		return -1;
++	}
++	ct = nf_ct_tuplehash_to_ctrack(h);
++	*nfct=ct;
++	if (NF_CT_DIRECTION(h) == IP_CT_DIR_REPLY) {
++		*set_reply = 1;
++	}
++
++	return 1;
++} 
++EXPORT_SYMBOL(get_conntrack_from_skb);
++#endif
++
+ unsigned int
+ nf_conntrack_in(struct net *net, u_int8_t pf, unsigned int hooknum,
+ 		struct sk_buff *skb)

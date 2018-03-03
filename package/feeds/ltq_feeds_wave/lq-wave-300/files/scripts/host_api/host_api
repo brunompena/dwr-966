@@ -1,0 +1,3071 @@
+#!/bin/sh
+#usage_start
+##
+## config API for Lantiq Wave300 wireless parameters
+## Copyright (C) 2010 Lantiq (Israel) Ltd.
+##
+##
+## Supported API commands:
+## host_api set <TID> <wlan interface> <name> <value> - set the value of a param
+## host_api get <TID> <wlan interface <name> - get the value of a param
+## host_api get_all <TID> <wlan interface> - get all wls params in a newline-separated list
+## host_api get_all <TID> <wlan interface> <object> - get all wls params for requested object: wlan_main, wlan_phy etc.
+## host_api commit <TID> - save changes to flash (this also commits changes to system, 
+## by calling the script that updates security/drvhlpr config files)
+## host_api apply <TID> - same as commit and also download changes to driver
+## host_api restart <TID> - Restarts the wireless interface
+## host_api add_vap <TID> <wlan interface> - add vap
+## host_api del_vap <TID> <ap index> - delete vap
+## host_api get_wlan <TID> <ap index> - return wlan interface of the ap index
+## host_api get_ap_index <TID> <ap name> - return ap index of the wlan interface from AP name
+## host_api clean <TID> - delete CLI_EXEC_LIST file
+## host_api get_number_vaps <TID> <wlan interface> - returns number of VAPs per physical not include physical
+## host_api set_ip <TID> <IP> - change IP to the new one
+## host_api set_wan_autodetect <TID> <value> - wan autodetect configuration (0 disable, 1 enable)
+## host_api set_wan_mode <TID> <mode> - wan mode select (ETH or DSL)
+## host_api set_dhcp <TID> <value> - enable/disable dhcp server ('server' to enable, 'disable' to disable)
+## host_api factorycfg <TID> [<IP>] - retore default, can add IP to set initial IP after reboot
+## host_api trigger_fw_recovery <TID> <wlan interface> <assert_type> [<recovery_type>] [<time>]
+## host_api scan <TID> <interface> [<disconnect>]
+## host_api connect <TID> <interface> <ap index> [<password/key>] [<wepKeyType>] [<wepEncrLvl>]
+## host_api connection_status <TID> <interface> - returns connection status
+## host_api disconnect <TID> <interface> - disconnect station
+## host_api reconnect <TID> <interface> - connect to a previous disconnected AP
+## host_api wps_pbc <TID> <wlan interface>
+## host_api wps_pin <TID> <wlan interface> [<enrolee_pin>] [<enrollee_mac>]
+##
+## e.g. 
+## host_api get $$ wlan0 ESSID
+##
+## TID = transaction ID. This is ignored in current implementation but may be used in  
+## future implementations to make atomic write operations of multiple params 
+## (usually, use the PID $$ for TID).
+##
+## wlan interface = What type of parameter. Possible values:
+##     / wlan1 / hw_wlan0 / hw_wlan1 / sys
+## NOTE: In the UGW implementation of this API, this parameter can be also AP MAPI index
+## e.g. 
+## host_api get $$ wlan0 ESSID
+## or
+## host_api get $$ 3 ESSID
+## 
+##
+## This version of the [ex-Metalink] config API uses the Lantiq UGW config system API 
+## as the wireless database.
+## This script is used for saving/reading wireless parameters in the rc.conf database.
+##
+## Wireless parameters are converted between ex-Metalink names and UGW parameters, 
+## using the UGWWirelessParamsConversion.csv file as a lookup table.
+## Parameters that have no equivalent are put in wave300.conf
+##
+#usage_end
+
+command=$1
+TID=$2
+conf_type=$3
+param=$4
+value=$5
+
+# These params in use by sed application
+param1=_start
+param2=_end
+
+# TODO- put this define into mtlk_init_platform.sh !!!
+RC_CONF_TAR_PATH=/etc
+
+#indicate mode of work for rc_conf_set.
+#If =0 then change section word count on each param call.
+update_byte_count=1
+
+# Defines
+if [ ! "$MTLK_INIT_PLATFORM" ]; then			
+	. /tmp/mtlk_init_platform.sh
+fi
+
+CLI_EXEC_LIST=/tmp/host_api_cli_exec_list
+CLI_EXEC_LIST_PREV=/tmp/host_api_cli_exec_list_prev
+
+# TODO: DEBUG: Delete this!!! ONLY FOR BOGUS TESTING ON A PC
+host=`uname -m`
+if [ "$host" = "i686" ]
+then
+	CONFIGS_PATH=./
+	PATH=$PATH:./
+	BINDIR=./
+	ETC_PATH=./
+fi
+
+#Use exit_safe as it ensure safe exit
+exit_safe()
+{
+    rm -f /tmp/rc.conf_$$
+    exit 1
+}
+
+##################################################
+#  safe_rc_conf_validation - safe copy of file
+#  lock file - gets two parameters:
+#    1: file - file to lock
+#    2: command to run on a shell
+#  When take lock it uses one semaphore key - for whatever file use, another process fail on syscfg_lock call
+#  When encapsulate command with single quote $$ inside syscfg_lock differ than $$ in host_api
+#  When encapsulate command with double quote $$ inside syscfg_lock sane as $$ in host_api
+#  When encapsulate command with double quote can pass parameters to syscfg_lock but use escap (\) when use parameter
+safe_rc_conf_validation()
+{
+    /usr/sbin/syscfg_lock $CONFIGS_PATH/rc.conf "
+    ret=0
+    # Verify rc.conf sanity
+    /usr/sbin/rcconf_chk $CONFIGS_PATH/rc.conf
+    error=\$?
+    if [ \$error -ne 0 ]
+    then
+        echo host_api: Critical error at rc.conf file sanity > /dev/console
+        exit 1
+    fi
+    `grep "^wl\|^gbc\|^lan_main\|^lan_dhcps\|^vlan_ch_cfg\|^auto_detect_cfg\|^wan_phy_cfg\|^default_wan_iface\|^qos_queuemgmt" $CONFIGS_PATH/rc.conf >  /tmp/rc.conf_$$`
+    # close lock, release file:
+    "
+    #error in sanity?
+    ret=$?
+    return $ret
+}
+ 
+# Include config files
+# use safe conf file read.
+if [ "$command" = "factorycfg" ]
+then
+    /usr/sbin/syscfg_lock $CONFIGS_PATH/rc.conf "
+    cp $RC_CONF_TAR_PATH/rc.conf.gz $CONFIGS_PATH/
+    /bin/gunzip -f $CONFIGS_PATH/rc.conf.gz 2> /dev/null
+    # delete overlay folder cause use of origin wave300.conf file
+    rm -f /overlay/ramdisk_copy/
+    # close lock, release file:
+    "
+fi
+
+# safe copy of rc.conf to tmp file
+safe_rc_conf_validation
+ret_val=$?
+if [ $ret_val = 0 ]
+then
+    ######################################################
+    # DO NOT delete /tmp/rc.conf, It is used later on !! #
+    ######################################################
+
+    # safely source rc.conf copy.
+    . /tmp/rc.conf_$$
+    . $CONFIGS_PATH/wave300.conf
+else
+    # failed to safe access rc.conf
+    echo "ERROR in host_api: could not source rc.conf, exiting host_api. your host_api command failed" > /dev/console
+    exit_safe
+fi
+
+
+case $conf_type in
+	wlan0)
+		if_instance=`find_index_from_wave_if wlan0`
+	;;
+	hw_wlan0)
+		if_instance=0
+	;;
+	sys)
+		if_instance=0
+	;;
+	wlan1)
+		if_instance=`find_index_from_wave_if wlan1`
+	;;
+	hw_wlan1)
+		if_instance=1
+	;;
+#TODO	+([0-9])*(.)*([0-9]) )
+#		if_instance=$conf_type
+#	;;
+#	* )
+#		print2log WARNING "Invalid wlan interface $conf_type"
+#		usage
+	* )
+                if_instance=$conf_type
+                if [ "$command" = "commit" ] || [ "$command" = "apply" ] || [ "$command" = "get_ap_index" ] || [ "$command" = "get_wlan" ] || [  "$command" = "del_vap" ] || [ "$command" = "clean" ] || [ "$command" = "get_number_vaps" ] || [ "$command" = "set_ip" ] || [ "$command" = "set_wan_autodetect" ] || [ "$command" = "set_wan_mode" ] || [ "$command" = "factorycfg" ] || [ "$command" = "set_dhcp" ] || [ "$command" = "restart" ]
+		then
+			if_instance=`find_index_from_wave_if wlan0`
+		fi
+	;;
+esac 
+
+usage()
+{
+	sed -n '/#usage'"$param1"'/,/#usage'"$param2"'/p' /bin/host_api  >> /tmp/usage_$$
+	cat /tmp/usage_$$ | grep "^\#\#" |  sed s/^\#\#// > /dev/console
+	rm /tmp/usage_$$
+	exit 1
+}
+
+
+# Determine the type of the interface. This is done by reading gbc_mode parameter. 
+# It is only present for VB systems. In case this parameter returns empty string - not present - 
+# read wlmn_${if_instance}_apType, where if_instance stands for Interface index in MAPI database.
+# Note that different translation schemes are used for AP and (VB) STA
+
+# MTLK definitions:
+STA_TYPE=0
+PAP_TYPE=2
+VAP_TYPE=3
+
+# UGW Router definitions
+UGW_AP_TYPE=0
+UGW_VAP_TYPE=1
+UGW_STA_TYPE=2
+
+# UGW VB definitions
+UGW_VB_STA_TYPE=0
+UGW_VB_AP_TYPE=1
+
+set_ap_params()
+{
+	eval ugw_if_type=\${wlmn_${if_instance}_apType}
+	case $ugw_if_type in
+		$UGW_AP_TYPE)
+			if_type="PAP"
+			# In order to implement MBSS, calculate phy_instance number (for physical APs will be same as if_instance)
+			phy_instance=${if_instance}
+			eval instance_cpe=\${wlmn_${if_instance}_cpeId}
+			CSV_FILE=$BINDIR/UGWWirelessParamsConversion.csv
+		;;
+		$UGW_STA_TYPE)
+			if_type="STA"
+			# Set phy_instance since only one instance can exist in the STA system
+			phy_instance=0
+			instance_cpe=1
+			CSV_FILE=$BINDIR/UGWWirelessStaParamsConversion.csv
+		;;
+		$UGW_VAP_TYPE)
+			if_type="VAP"
+			# In order to implement MBSS, calculate phy_instance number
+			eval phy_instance=\${wlmn_${if_instance}_radioCpeId}
+			let phy_instance=$phy_instance-1
+			eval instance_cpe=\${wlmn_${if_instance}_cpeId}
+			CSV_FILE=$BINDIR/UGWWirelessParamsConversion.csv
+		;;
+		*)
+			print2log WARNING "<$@> Unknown interface type: $ugw_if_type, interface ${if_instance}"
+			usage
+		;;
+	esac
+}
+
+
+case $gbc_mode in
+	$UGW_VB_STA_TYPE)
+		# VB STA
+		if_type="STA"
+		# Set phy_instance since only one instance can exist in the VB system
+		phy_instance=0
+		instance_cpe=1
+		CSV_FILE=$BINDIR/UGWWirelessStaParamsConversion.csv
+	;;
+	$UGW_VB_AP_TYPE)
+		# Check if PAP or VAP
+		set_ap_params
+	;;
+	*)
+		# If gbc section doesn't exist in rc.conf, check if PAP or VAP.
+		set_ap_params
+	;;
+esac
+
+
+# teststatus - test status of an operation (which is received as the argument).
+#  Exit if the status ! 0
+#  Arguments: 
+#  $1 - the status to be tested.
+#  $2 - the message to be printed on an error
+teststatus()
+{
+	ST=$1
+	MES=$2
+	
+	if [ 0 != $1 ]
+	then
+		echo "${MES}"  
+		print2log WARNING ${MES}
+                rm -f /tmp/rc.conf_$$
+		exit ${ST}
+	fi
+	return 0
+}
+
+# Convert a parameter from MTLK name to UGW format: "section prefix if_instance param_name"
+# Algo: Use awk to look up the param in a csv file that contains all the MTLK params and UGW mapping
+# If the param isn't found, then assume that this is a wave300 param that is not managed with 
+# default value (not in CSV).
+# NOTE: this function updates both ugw_param and is_special_param, so do not use as `convert_name_MTLK_to_UGW...`, 
+# call in your context
+# # #
+# To better understand the awk commands, use following scheme:
+#   $1 is a MTLK param name
+#  The UGW name is constructed from section name or prefix and UGW param name:
+#   $6 is a section name for the parameter in rc.conf 
+#           (if it's wlan_phy, additional translation needed for MBSS)
+#   $7 is a prefix name for the parameter in rc.conf
+#   $8 is a translated UGW param name in rc.conf
+#   $9 and $10 are only present for special parameters
+#   $11 is only present for those parameters who have special indexing (such as _Count or _1_0 )
+#   $12 is script name to execute on 'apply' command
+convert_name_MTLK_to_UGW()
+{ 
+	req_param=$1
+	ugw_name=`awk -F "," -v "param=$req_param" -v "if_instance=$if_instance" -v "phy_instance=$phy_instance" -v "instance_cpe=$instance_cpe" '$1 == param {\
+            if ($11 == "Count") {ugw_full_name=$6"_Count_ugw_section_"$6} else \
+            {if ($6 == "wlan_phy" || $6 == "wlan_wave300") {if_instance=phy_instance}; \
+             if ($11 == "") {ifx="_"if_instance} \
+			 else {if ($11 == "no_indexing") {ifx=""} \
+				   else {ifx=instance_cpe; \
+						 if ($11 == "_n") {ifx=ifx"_"if_instance} else {ifx=ifx$11}}}; \
+             ugw_full_name=$7ifx"_"$8"_ugw_section_"$6}; \
+            if ($9 != "" || $10 != "") {ugw_full_name=ugw_full_name"_this_is_special_param"}; \
+            print ugw_full_name}' $CSV_FILE`
+	if [ "$ugw_name" = "" ]
+	then
+		# Param isn't in conversion db - so return wave300
+		ugw_name="wlwav_${if_instance}_${param}_ugw_section_wlan_wave300"
+	fi
+
+	ugw_param=${ugw_name%_ugw_section_*}
+	ugw_section=${ugw_name#${ugw_param}_ugw_section_}
+	if [ "${ugw_section%_this_is_special_param}" = "${ugw_section}" ]
+	then
+		is_special_param=no
+	else
+		ugw_section=${ugw_section%_this_is_special_param}
+		is_special_param=yes
+	fi
+}
+
+# get_vector_value - define how to return data of vector parameters.
+# Vector parameters data have two modes:
+# 	data wrapped by double quotes - when use 'get_all' and source the data
+# 	data is not wrapped - when use 'get' and manipulate data (like in awk)
+# When use 'get_all', when source the parameter will contain only first element if not wrapped by quotes.
+# When use 'get', if data is wrapped by quotes, awk '{print $1}' return first element with one quote attached
+get_vector_value()
+{
+	if [ "$command" = "get_all" ]
+	then
+		echo "\"$*\""
+	else
+		echo "$*"
+	fi
+}
+
+# handle_special_param - translates the MTLK name into UGW name, performs all special actions needed 
+# for this particular parameter and retruns it vaue or updates it according to the type of requested action.
+# If so, give it a special treatment (set or get using $value) and return 1, otherwise return 0
+handle_special_param()
+{
+	action_requested=$1
+	
+	# The caller of this function must bring UGW name and value from the csv file (ugw_param and ugw_value)
+	if [ "$action_requested" = "GET_PARAM" ]
+	then
+		case $param in
+# BridgeMode is possible only in STA
+			BridgeMode)
+				if [ "$ugw_value" = "0" ]; then value=2; elif [ "$ugw_value" = "1" ]; then value=3; else value=1; fi
+			;;
+			NetworkMode | NetworkModeSTA)
+# In MAPI	0 : 11bg   1 : 11a   2 : 11b   3 : 11g   4 : 11n   5 : 11bgn   6 : 11gn   7 : 11an   8 : 11abgn(?)
+# In Mtlk	19: 11bg   10: 11a   17: 11b   18: 11g   20: 11n(b)   12: 11n(a)   23: 11bgn 22: 11gn   14: 11an   30: 11abgn(?)
+# In case of n, the answer is based on Frequency band value - in MAPI 0=2.4GHz, 1=5GHz, 2=both
+				if   [ "$ugw_value" = "0" ]; then value=19; elif [ "$ugw_value" = "1" ]; then value=10
+				elif [ "$ugw_value" = "2" ]; then value=17; elif [ "$ugw_value" = "3" ]; then value=18
+				elif [ "$ugw_value" = "5" ]; then value=23; elif [ "$ugw_value" = "6" ]; then value=22
+				elif [ "$ugw_value" = "7" ]; then value=14; elif [ "$ugw_value" = "8" ]; then value=30
+				elif [ "$ugw_value" = "4" ]; then 
+					convert_name_MTLK_to_UGW FrequencyBand;
+					eval FrequencyBand_value=\$$ugw_param;
+					if [ "$FrequencyBand_value" = "0" ]; then value=20; else value=12; fi;
+				fi
+			;;
+			FixedHTRate)
+				if [ "$ugw_value" = "0" ]; then value="auto";
+				else
+					eval ChannelBonding_value=\${wlphy_${if_instance}_nChanWidth}
+					if [ "$ChannelBonding_value" = "1" ]
+					then
+						# Note: 27.0 = both 16 and 23, we return 16.
+						#       81.0 = both 19 and 25, we return 19
+						#       108.0 = both 20 and 26, we return 20
+						#       108.0 = both 20 and 26, we return 20
+						# 54.0 was deleted because it is also in FixedRate. Return auto for fixed HT rate in this case.
+						# For any ilegal rate (probably fixedRate rate) return auto
+						if   [ "$ugw_value" = "13.0" ]; then value=15; elif [ "$ugw_value" = "27.0" ]; then value=16
+						elif [ "$ugw_value" = "40.5" ]; then value=17; elif [ "$ugw_value" = "81.0" ]; then value=19;
+						elif [ "$ugw_value" = "108.0" ]; then value=20;elif [ "$ugw_value" = "121.5" ]; then value=21
+						elif [ "$ugw_value" = "135.0" ]; then value=22;elif [ "$ugw_value" = "162.0" ]; then value=27
+						elif [ "$ugw_value" = "216.0" ]; then value=28; elif [ "$ugw_value" = "243.0" ]; then value=29
+						elif [ "$ugw_value" = "270.0" ]; then value=30
+						else value="auto"
+						fi
+					else
+						# Note: 13.0 = both 16 and 23, we return 16.
+						#       39.0 = both 19 and 25, we return 19
+						# For any ilegal rate (probably fixedRate rate) return auto
+						if   [ "$ugw_value" = "6.5" ]; then value=15; elif [ "$ugw_value" = "13.0" ]; then value=16
+						elif [ "$ugw_value" = "19.5" ]; then value=17; elif [ "$ugw_value" = "26.0" ]; then value=18
+						elif [ "$ugw_value" = "39.0" ]; then value=19; elif [ "$ugw_value" = "52.0" ]; then value=20
+						elif [ "$ugw_value" = "58.5" ]; then value=21; elif [ "$ugw_value" = "65.0" ]; then value=22
+						elif [ "$ugw_value" = "53.0" ]; then value=26; elif [ "$ugw_value" = "78.0" ]; then value=27
+						elif [ "$ugw_value" = "107.0" ]; then value=28; elif [ "$ugw_value" = "117.0" ]; then value=29
+						elif [ "$ugw_value" = "130.0" ]; then value=30
+						else value="auto"
+						fi
+					fi
+				fi
+			;;
+			FixedRate)
+				if [ "$ugw_value" = "0" ]; then value="auto";
+				else
+					# For any ilegal rate (probably FixedHTRate rate) return auto
+					if   [ "$ugw_value" = "6.0" ]; then value=0; elif [ "$ugw_value" = "9.0" ]; then value=1
+					elif [ "$ugw_value" = "12.0" ]; then value=2; elif [ "$ugw_value" = "18.0" ]; then value=3
+					elif [ "$ugw_value" = "24.0" ]; then value=4; elif [ "$ugw_value" = "36.0" ]; then value=5
+					elif [ "$ugw_value" = "48.0" ]; then value=6; elif [ "$ugw_value" = "54.0" ]; then value=7
+					elif [ "$ugw_value" = "2.0" ]; then value=8; elif [ "$ugw_value" = "5.5" ]; then value=9
+					elif [ "$ugw_value" = "11.0" ]; then value=10; elif [ "$ugw_value" = "1.0" ]; then value=11
+					else value="auto"
+					fi
+				fi
+			;;
+			AclMode)
+				if [ "$ugw_value" = "0" ]; then value=1; elif [ "$ugw_value" = "1" ]; then value=2; elif [ "$ugw_value" = "2" ]; then value=0; fi
+			;;
+			ACL)
+				value="";
+				if [ "$ugw_value" != "2" ] 
+				then 
+					i=0;
+					while [ $i -lt $wlan_mac_control_Count ]
+					do
+						eval ugw_pcpeId=\${wlmacctrl_${i}_pcpeId}
+						if [ $ugw_pcpeId == $instance_cpe ]
+						then
+							eval ugw_value=\${wlmacctrl_${i}_macAddr}
+							value="${ugw_value} ${value}"
+						fi 
+						let i=$i+1
+					done
+					value=\"$value\"
+				fi
+			;;
+			PowerSelection)
+				if [ "$ugw_value" = "50" ]; then value=-3; elif [ "$ugw_value" = "25" ]; then value=-6; elif [ "$ugw_value" = "12" ]; then value=-9; else value=0; fi
+			;;
+			STBC)
+				if [ "$ugw_value" = "0" ]; then value=0; else value=1; fi	
+			;;
+			Channel)
+				convert_name_MTLK_to_UGW autoChanEna;
+				eval autoChanEn_value=\$$ugw_param;
+				if [ "$autoChanEn_value" = "1" ]; then value=0; else value=$ugw_value; fi
+			;;
+			AMPDUMaxLength)
+				if [ "$ugw_value" = "8191" ]; then value=0; elif [ "$ugw_value" = "16383" ]; then value=1; elif [ "$ugw_value" = "32767" ]; then value=2; else value=3; fi
+			;;
+			network_type)
+				eval value=\${${if_type}_TYPE}
+			;;
+			ShortPreamble)
+				if [ "$ugw_value" = "2" ]; then value=0; else value=1; fi
+			;;
+			WepEncryption)
+				if [ "$ugw_value" = "1" ]; then value=1; else value=0; fi
+			;;
+			FrequencyBand)
+				if [ "$ugw_value" = "0" ]; then value=1; elif [ "$ugw_value" = "1" ]; then value=0; else value=2; fi
+			;;
+			NonProc_WPA_Personal_PSK)
+				if [ "$ugw_value" = "0" ] 
+				then
+					convert_name_MTLK_to_UGW passPhrase;
+					# Handle special characters, get all chars of passphrase, remove quotes and add single quotes
+                                        value=`grep $ugw_param /tmp/rc.conf_$$ | sed 's/^'$ugw_param'=*//' | sed 's/^"//' | sed 's/"$//'`
+					value=\'$value\'
+				else
+					convert_name_MTLK_to_UGW psk;
+					eval value=\$$ugw_param;
+				fi
+			;;
+			NonProc_WPA_Enterprise_Encapsulation)
+				if [ "$ugw_value" = "2" ]; then value=0; elif [ "$ugw_value" = "3" ]; then value=1; elif [ "$ugw_value" = "4" ]; then value=2; fi
+			;;
+			NonProc_WPA_Personal_Encapsulation)
+				if [ "$ugw_value" = "2" ]; then value=0; elif [ "$ugw_value" = "3" ]; then value=1; elif [ "$ugw_value" = "4" ]; then value=2; fi
+			;;
+			NonProc_WepKeyLength)
+				if [ "$ugw_value" = "0" ]; then value=64; elif [ "$ugw_value" = "1" ]; then value=128; elif [ "$ugw_value" = "" ];
+				then
+					# VB rc.conf doesn't contain this info yet TBD
+					if [ "$wlprof_actWepKey" = "" ]; then value=""; 
+					else
+						wepKey_param=wlprof_wepKey${wlprof_actWepKey}
+						eval wepKey_value=\$${wepKey_param};
+						value=`expr length ${wepKey_value#0x}`
+					fi
+				fi
+			;;
+			NonProcSecurityMode)
+				if [ "$ugw_value" = "2" ]; then value=4; elif [ "$ugw_value" = "3" ]; then value=3;  
+				else
+					convert_name_MTLK_to_UGW encrType;
+					eval encrType_value=\$$ugw_param;
+					if [ "$encrType_value" = "1" ]; then value=2; else value=1; fi
+				fi
+			;;
+			NonProc_WPA_Enterprise_Mode)
+#				Commented out since mode 4 is buggy and is for now 
+#				if [ "$ugw_value" = "3" ]; then value=4; 	else value=$ugw_value;  fi
+				value=$ugw_value
+			;;
+			NonProc_WPA_Personal_Mode)
+#				Commented out since mode 4 is buggy and is for now 
+#				if [ "$ugw_value" = "3" ]; then value=4; else value=$ugw_value; fi
+				value=$ugw_value
+			;;
+			UpperLowerChannelBonding)				
+				convert_name_MTLK_to_UGW FrequencyBand;
+				eval FrequencyBand_value=\$$ugw_param;
+				# only if freqBand=5Ghz calc upper/lower value according to channel number:
+				# for the channels that are mult. of 8 set sec. ch. to upper, otherwise to lower
+				# otherwise take as is from rc.conf
+				if [ "$FrequencyBand_value" = "1" ]
+				then 
+					convert_name_MTLK_to_UGW Channel;
+					eval channel_value=\$$ugw_param;
+					if [ $channel_value -lt 149 ]
+					then
+						value=$(( ( ( $channel_value - 36 ) % 8 ) != 0 ))
+					else
+						value=$(( ( ( $channel_value - 149 ) % 8 ) != 0 ))
+					fi
+				else
+					value=$ugw_value
+				fi				
+			;;
+			APforwarding)
+				if [ "$ugw_value" = "1" ]; then value=0; else value=1; fi
+			;;
+			RTSThreshold)
+				value=$ugw_value
+			;;
+			ShortCyclicPrefixTx)
+				if [ "$ugw_value" = "1" ]; then value=0; else value=1; fi
+			;;
+			WepKeys_DefaultKey0 | WepKeys_DefaultKey1 | WepKeys_DefaultKey2 | WepKeys_DefaultKey3)
+				key_name=$ugw_param
+				convert_name_MTLK_to_UGW wepKeyType;
+				eval wepKeyType_value=\$$ugw_param;
+				if [ "$wepKeyType_value" = "1" ]; then value="0x$ugw_value"
+				else
+					# Handle special characters, get all chars of ascii wep key, remove quotes and add single quotes
+                                        value=`grep $key_name= /tmp/rc.conf_$$ | sed 's/^'$key_name'=//' | sed 's/^"//' | sed 's/"$//'`
+					value=\'$value\'
+				fi
+			;;
+			Authentication | NonProc_Authentication)
+				if [ "$ugw_value" = "1" ]; then value=2; else value=1; fi
+			;;
+			AC_BK_TXOP | AC_BK_TXOP_AP | AC_BE_TXOP | AC_BE_TXOP_AP | AC_VI_TXOP | AC_VI_TXOP_AP | AC_VO_TXOP | AC_VO_TXOP_AP)
+				if [ -z $ugw_value ]; then value=""; else value=$(($ugw_value*32)); fi
+			;;
+			device_name)
+				if [ "$gbc_name" != "" ]; then value=$gbc_name; else value=$ugw_value; fi
+			;;
+			ip_config_method)
+				if [ "$ugw_value" = "0" ]; then value=1; else value=0; fi				
+			;;
+			NeverConnected) 
+				# If SSID is updated in profile section, we were connected to some AP before 
+				if [ -z $ugw_value ]; then value=1; else value=0; fi
+			;;
+			wlanInterfaceCount) 
+				# This parameter is special only for STA. Just return 1 
+				value=1;
+			;;
+			ESSID)
+				# Handle special characters, get all chars of essid, remove quotes and add single quotes
+                                value=`grep $ugw_param= /tmp/rc.conf_$$ | sed 's/^'$ugw_param'=//' | sed 's/^"//' | sed 's/"$//'`
+				value=\'$value\'
+			;;
+			NonProc_WPA_Enterprise_Radius_Key)
+				# Handle special characters, get all chars of radius shared key, remove quotes and add single quotes
+                                value=`grep $ugw_param= /tmp/rc.conf_$$ | sed 's/^'$ugw_param'=//' | sed 's/^"//' | sed 's/"$//'`
+				value=\'$value\'
+			;;
+			PeerAPMacs)
+				# returns list of mac addresses to be added to AP.
+				value=""
+				if [ "$ugw_value" = "1" ]	
+				then	
+					i=0
+					while [ $i -lt $wlan_wds_macs_Count ]; do
+						eval ugw_pcpeId=\${wlwdsmac_${i}_pcpeId}
+						if [ $ugw_pcpeId == $instance_cpe ]; then
+							eval ugw_value=\${wlwdsmac_${i}_peerAP}
+							value="${value}	${ugw_value}"
+						fi
+						let	i=$i+1
+					done
+				fi
+			;;
+			PeerAPkeyIdx)
+				eval enable=\${wlwds_${if_instance}_enable}
+				if [ "$enable" == "1" ]
+				then
+					eval encrType=\${wlwds_${if_instance}_encrType}
+					if [ "$encrType" == "0" ]	
+					then	
+						value="0"
+					elif [ "$encrType" == "1" ]
+					then
+						let value=$ugw_value+1
+					fi
+				fi
+			;;
+			CoCPower)
+				# This parameter returns the enable mode followed by Rx and Tx (same values) no. of antennas 
+                                # ugw_value - already hold the value of AutoCoC read from rc.conf
+                                value=$ugw_value
+                                if [ "$ugw_value" = "0" ]
+                                then
+                                    eval ugw_inter=\${wlcoc_${if_instance}_numAntennas}
+                                    value="${value} ${ugw_inter} ${ugw_inter}"
+                                fi
+			;;
+ 			CoCAutoCfg)
+                                limit_antennas="1 2 3"
+                                for count in $limit_antennas
+                                do
+                                    eval ugw_inter=\${wlcoc_${if_instance}_autoCoC${count}x${count}TimerInterval}
+                                    value="${value} ${ugw_inter}"
+                                done
+                                eval limit1=\${wlcoc_${if_instance}_autoCoC1x1HighLimit}
+                                eval limit2=\${wlcoc_${if_instance}_autoCoC2x2LowLimit}
+                                eval limit3=\${wlcoc_${if_instance}_autoCoC2x2HighLimit}
+                                eval limit4=\${wlcoc_${if_instance}_autoCoC3x3LowLimit}
+                                value="${value} ${limit1} ${limit2} ${limit3} ${limit4}"
+			;;
+			pCoCAutoCfg)
+				# Return the interval to check the traffic, the low and high thresholds for the Power CoC(VPU frequecy OTF).
+				eval pCoCIntval=\${wlcoc_${if_instance}_pCocIntvl}
+				eval pCoCLowThreshold=\${wlcoc_${if_instance}_pCocLowThreshold}
+				eval pCoCUpperThreshold=\${wlcoc_${if_instance}_pCocUpperThreshold}
+				value="${pCoCIntval} ${pCoCLowThreshold} ${pCoCUpperThreshold}"
+			;;
+			vapStaLimits)
+				# This parameter returns the number of reserved clients and maximum client limit for an AP.
+				eval min_value=\${wlmn_${if_instance}_minSta}
+				value="$min_value $ugw_value"
+				value=\"$value\"
+			;;
+ 			FwRecovery)
+				# fast full complete timer debug
+				value=""
+				recovery_type="fwFast"
+				for count in 1 2
+				do
+					eval enabled=\${wlwave_${if_instance}_${recovery_type}RecoverEna}
+					eval limit=\${wlwave_${if_instance}_${recovery_type}RecoverLim}
+					#space only at the end - this avoid spcace at value read (empty value gives space)
+					if [ "$enabled" = "0" ]; then value="${value}${enabled} "; else value="${value}${limit} "; fi
+					#second loop is full type (change if add more than 2 in loop !):
+					recovery_type="fwFull"
+				done
+				eval complete_enabled=\${wlwave_${if_instance}_fwCompleteRecoverEna}
+				eval timer=\${wlwave_${if_instance}_fwRecoverTimer}
+				eval dump=\${wlwave_${if_instance}_fwAutoRecoverDumpEna}
+				#space already exist at end of value, therefore no space to complete_enabled param
+				value=`get_vector_value "${value}${complete_enabled} ${timer} ${dump}"`
+			;;
+			boostMode)
+				# 3 values: 11b-boost Auto-response-boost Low-OFDM-modulation-boost
+				eval dot11b_boost=\${wlwave_${if_instance}_11bBoost}
+				eval Auto_response_boost=\${wlwave_${if_instance}_autoResponseBoost}
+				eval Low_OFDM_modulation_boost=\${wlwave_${if_instance}_lowOfdmModulationBoost}
+				#space already exist at end of value, therefore no space to complete_enabled param
+				value=`get_vector_value "${dot11b_boost} ${Auto_response_boost} ${Low_OFDM_modulation_boost}"`
+			;;
+			*)
+				value="$param tricky, not implemented yet"
+			;;
+		esac	
+		echo "$value"
+	else # SET_PARAM
+		case $param in
+# AclMode
+#   on set 0->2; 1->0; 2->1
+# 
+# ACL
+#   on set Split string to many params Update wlan_mac_control_Count
+# 
+# FixedRate
+#   on set "If ""auto""     set autoRateFallbackEna=1 else =0 else     0->""6.0"";1->""9.0"";2->""12.0"";3->""18.0"";4->""24.0"";5->""36.0"";6->""48.0"";7->""54.0"";8->""2.0"";9->""5.5"";10->""11.0"";11->""1.0"""
+# 
+# FixedHTRate
+#   on set "If ""auto""     set autoRateFallbackEna=1 else set autoRateFallbackEna=0 else(not auto)    read ChannelBonding     if 1 (CB)        15->""13"";16->""27.0"";17->""40.5"";18->""54.0"";19->""81.0"";20->""108.0"";21->""121.5"";22->""135.0"";23->""27.0"";24->""54.0"";25->""81.0"";26->""108.0"";27->""162.0"";28->""216.0"";29->""243.0"";30->""270.0""     else (NCB)          15->""6.5"";16->""13.0"";17->""19.5"";18->""26.0"";19->""39.0"";20->""52.0"";21->""58.5"";22->""65.0"";23->""13.0"";24->""26.0"";25->""39.0"";26->""53.0"";27->""78.0"";28->""107.0"";29->""117.0"";30->""130.0"""
+# BridgeMode is possible only in STA
+			BridgeMode)
+				if [ $value -eq 1 ]; then ugw_value=2; elif [ $value -eq 2 ]; then ugw_value=0; else ugw_value=1; fi
+			;;
+			NetworkMode | NetworkModeSTA)
+# In MAPI	0 : 11bg   1 : 11a   2 : 11b   3 : 11g   4 : 11n   5 : 11bgn   6 : 11gn   7 : 11an   8 : 11abgn(?)
+# In Mtlk	19: 11bg   10: 11a   17: 11b   18: 11g   20: 11n(b)   12: 11n(a)   23: 11bgn 22: 11gn   14: 11an   30: 11abgn(?)
+				if [ $value -eq 10 ]; then ugw_value=1; elif [ $value -eq 12 ]; then ugw_value=4
+				elif [ $value -eq 14 ]; then ugw_value=7; elif [ $value -eq 17 ]; then ugw_value=2
+				elif [ $value -eq 18 ]; then ugw_value=3; elif [ $value -eq 19 ]; then ugw_value=0
+				elif [ $value -eq 20 ]; then ugw_value=4; elif [ $value -eq 22 ]; then ugw_value=6
+				elif [ $value -eq 23 ]; then ugw_value=5; elif [ $value -eq 30 ]; then ugw_value=8; fi
+			;;
+			PowerSelection)
+				if [ $value -eq 0 ]; then ugw_value=100; elif [ $value -eq -3 ]; then ugw_value=50
+				elif [ $value -eq -6 ]; then ugw_value=25; elif [ $value -eq -9 ]; then ugw_value=12; fi
+			;;
+			STBC)
+				if [ $value -eq 0 ]; then ugw_value=0; elif [ $value -eq 1 ]; then ugw_value=1; fi
+			;;
+			Channel)
+				if [ $value -eq 0 ]; then convert_name_MTLK_to_UGW autoChanEna; ugw_value=1; else ugw_value=$value; rc_conf_set; convert_name_MTLK_to_UGW autoChanEna; ugw_value=0; fi
+			;;
+			AMPDUMaxLength)
+				if [ $value -eq 0 ]; then ugw_value=8191; elif [ $value -eq 1 ]; then ugw_value=16383
+				elif [ $value -eq 2 ]; then ugw_value=32767; else ugw_value=65535; fi
+			;;
+			network_type)
+				if [ "$gbc_mode" != "" ];  
+				then
+					if [ $value -eq $STA_TYPE ]; then ugw_value=$UGW_VB_STA_TYPE; else ugw_value=$UGW_VB_AP_TYPE; fi
+				else
+					ugw_section=wlan_main;
+					ugw_param=wlmn_${if_instance}_apType;
+					if [ $value -eq $STA_TYPE ]; then ugw_value=$UGW_STA_TYPE; elif [ $value -eq $VAP_TYPE ]; then ugw_value=$UGW_VAP_TYPE; else ugw_value=$UGW_AP_TYPE; fi
+				fi
+			;;
+			ShortPreamble)
+				if [ $value -eq 0 ]; then ugw_value=2; else ugw_value=1; fi
+			;;
+			WepEncryption) 
+				# Only update if "WEP" value is requested; otherwise set ugw_section to empty string - this will indicate "do nothing" to rc_conf_set 
+				if [ $value -eq 1 ]; then ugw_value=1; else ugw_section=""; fi
+			;;
+			FrequencyBand)
+				if [ $value -eq 0 ]; then ugw_value=1; elif [ $value -eq 1 ]; then ugw_value=0; else ugw_value=2; fi
+			;;
+			NonProc_WPA_Personal_PSK)
+				ascii_val=`printf "%b" "$value"`
+				if [ ${#ascii_val} -eq 64 ]; then ugw_value=1; rc_conf_set; convert_name_MTLK_to_UGW psk; ugw_value=$value
+				else ugw_value=0; rc_conf_set; convert_name_MTLK_to_UGW passPhrase; ugw_value=$value; fi
+			;;
+			NonProc_WPA_Enterprise_Encapsulation)
+				if [ $value -eq 0 ]; then ugw_value=2; elif [ $value -eq 1 ]; then ugw_value=3; else ugw_value=4; fi
+			;;
+			NonProc_WPA_Personal_Encapsulation)
+				if [ $value -eq 0 ]; then ugw_value=2; elif [ $value -eq 1 ]; then ugw_value=3; else ugw_value=4; fi
+			;;
+			NonProc_WepKeyLength)
+				if [ $value -eq 64 ]; then ugw_value=0; else ugw_value=1; fi
+			;;
+			NonProcSecurityMode)
+				if [ $value -eq 1 ]; then 
+					ugw_value=0; rc_conf_set
+					convert_name_MTLK_to_UGW encrType; ugw_value=0; rc_conf_set
+					convert_name_MTLK_to_UGW beaconType; ugw_value=0
+				elif [ $value -eq 2 ]; then 
+					eval authType_value=\$$ugw_param;
+					if [ $authType_value -gt 1 ]; then ugw_value=0; rc_conf_set; fi
+					convert_name_MTLK_to_UGW encrType; ugw_value=1; rc_conf_set
+					convert_name_MTLK_to_UGW beaconType; ugw_value=0
+				elif [ $value -eq 3 ]; then ugw_value=3
+				elif [ $value -eq 4 ]; then ugw_value=2
+				fi
+			;;
+			NonProc_WPA_Enterprise_Mode)
+				ugw_value=$value
+			;;
+			NonProc_WPA_Personal_Mode)
+				ugw_value=$value
+			;;
+			UpperLowerChannelBonding)
+				ugw_value=$value
+			;;
+			APforwarding)
+				if [ $value -lt 1 ]; then ugw_value=1; else ugw_value=0; fi
+			;;
+			RTSThreshold)
+				if [ "$value" = "auto" ]; then ugw_value=1600; else ugw_value=$value; fi
+			;;
+			ShortCyclicPrefixTx)
+				if [ $value -lt 1 ]; then ugw_value=1; else ugw_value=0; fi
+			;;
+			WepKeys_DefaultKey0 | WepKeys_DefaultKey1 | WepKeys_DefaultKey2 | WepKeys_DefaultKey3)
+				ugw_value=${value#0x};	rc_conf_set; convert_name_MTLK_to_UGW wepKeyType
+				if [ "$ugw_value" == "$value" ]; then ugw_value=0; else ugw_value=1;  fi
+			;;
+			Authentication | NonProc_Authentication)
+				eval authType_value=\$$ugw_param;
+				# Always set "OPEN" unless "SHARED" requested.
+				if [ $value = "2" ]; then ugw_value=1; else ugw_value=0; fi
+			;;
+			AC_BK_TXOP | AC_BK_TXOP_AP | AC_BE_TXOP | AC_BE_TXOP_AP | AC_VI_TXOP | AC_VI_TXOP_AP | AC_VO_TXOP | AC_VO_TXOP_AP)
+				ugw_value=$(($value/32))
+			;;
+			ip_config_method)
+				if [ $value = "0" ]; then ugw_value=1; else ugw_value=0; fi				
+			;;
+			device_name)
+				ugw_value=$value
+				if [ "$gbc_name" != "" ] 
+				then 
+					ugw_section=gen_bd_cfg;
+					ugw_param=gbc_name;
+				fi
+			;;
+			NeverConnected) 
+				# The returned value for this parameter is defined by profile ssid string, so nothing should be done upon set request
+				# Set ugw_section to empty string - this will indicate "do nothing" to rc_conf_set 
+				ugw_section=""
+			;;
+			wlanInterfaceCount) 
+				# This parameter is special only for STA. nothing shall be done upon set request. 
+				# Set ugw_section to empty string - this will indicate "do nothing" to rc_conf_set 
+				ugw_section=""
+			;;
+			ESSID)
+				ugw_value="$value"
+			;;
+			NonProc_WPA_Enterprise_Radius_Key)
+				ugw_value=$value
+			;;
+			vapStaLimits)
+				# This parameter sets the number of reserved clients and maximum client limit for an AP.
+				# Since the parameter is saved as "minSta maxSta" we need to extract the 2 numbers
+				# Find the location of the space between the values and read both values.
+				d_idx=`expr index "$value" " "`
+				min_end=`expr $d_idx - 1`
+				min_value=`expr ${value:0:$min_end}`
+				max_value=`expr ${value:$d_idx}`
+				convert_name_MTLK_to_UGW minSta; ugw_value=$min_value; rc_conf_set
+				convert_name_MTLK_to_UGW maxSta; ugw_value=$max_value; rc_conf_set
+			;;
+			FixedHTRate)
+				if [ "$value" = "auto" ]; then ugw_value="0";
+				else
+					eval ChannelBonding_value=\${wlphy_${if_instance}_nChanWidth}
+					convert_name_MTLK_to_UGW FixedHTRate;
+					if [ "$ChannelBonding_value" = "1" ]
+					then
+						if   [ "$value" = "15" ]; then ugw_value="13.0"; elif [ "$value" = "16" ]; then ugw_value="27.0"
+						elif [ "$value" = "17" ]; then ugw_value="40.5"; elif [ "$value" = "18" ]; then ugw_value="54.0"
+						elif [ "$value" = "19" ]; then ugw_value="81.0"; elif [ "$value" = "20" ]; then ugw_value="108.0"
+						elif [ "$value" = "21" ]; then ugw_value="121.5"; elif [ "$value" = "22" ]; then ugw_value="135.0"
+						elif [ "$value" = "23" ]; then ugw_value="27.0"; elif [ "$value" = "25" ]; then ugw_value="81.0"
+						elif [ "$value" = "26" ]; then ugw_value="108.0"; elif [ "$value" = "27" ]; then ugw_value="162.0"
+						elif [ "$value" = "28" ]; then ugw_value="216.0"; elif [ "$value" = "29" ]; then ugw_value="243.0"
+						elif [ "$value" = "30" ]; then ugw_value="270.0"
+						fi
+					else
+						if   [ "$value" = "15" ]; then ugw_value="6.5"; elif [ "$value" = "16" ]; then ugw_value="13.0"
+						elif [ "$value" = "17" ]; then ugw_value="19.5"; elif [ "$value" = "18" ]; then ugw_value="26.0"
+						elif [ "$value" = "19" ]; then ugw_value="39.0"; elif [ "$value" = "20" ]; then ugw_value="52.0"
+						elif [ "$value" = "21" ]; then ugw_value="58.5"; elif [ "$value" = "22" ]; then ugw_value="65.0"
+						elif [ "$value" = "23" ]; then ugw_value="13.0"; elif [ "$value" = "25" ]; then ugw_value="39.0"
+						elif [ "$value" = "26" ]; then ugw_value="53.0"; elif [ "$value" = "27" ]; then ugw_value="78.0"
+						elif [ "$value" = "28" ]; then ugw_value="107.0"; elif [ "$value" = "29" ]; then ugw_value="117.0"
+						elif [ "$value" = "30" ]; then ugw_value="130.0"
+						fi
+					fi
+                           fi
+			;;
+			FixedRate)
+				if [ "$value" = "auto" ]; then ugw_value="0";
+				else
+					if   [ "$value" = "0" ]; then ugw_value="6.0"; elif [ "$value" = "1" ]; then ugw_value="9.0"
+					elif [ "$value" = "2" ]; then ugw_value="12.0"; elif [ "$value" = "3" ]; then ugw_value="18.0"
+					elif [ "$value" = "4" ]; then ugw_value="24.0"; elif [ "$value" = "5" ]; then ugw_value="36.0"
+					elif [ "$value" = "6" ]; then ugw_value="48.0"; elif [ "$value" = "7" ]; then ugw_value="54.0"
+					elif [ "$value" = "8" ]; then ugw_value="2.0"; elif [ "$value" = "9" ]; then ugw_value="5.5"
+					elif [ "$value" = "10" ]; then ugw_value="11.0"; elif [ "$value" = "11" ]; then ugw_value="1.0"
+					fi
+				fi
+			;;
+			AclMode)
+			      if [ "$value" = "1" ]; then ugw_value=0; elif [ "$value" = "2" ]; then ugw_value=1; elif [ "$value" = "0" ]; then ugw_value=2; fi
+			;;
+			PeerAPkeyIdx)
+				if [ "$value" = "0" ]
+				then
+					# If value = 0 then set WDS encrType 0 (open)
+					convert_name_MTLK_to_UGW WDSEncrType
+					ugw_value=0
+				else 
+					# If value > 0 then set WDS encrType 1 (WEP) and set key index -1 
+					let ugw_value=$value-1
+					rc_conf_set
+					convert_name_MTLK_to_UGW WDSEncrType
+					ugw_value=1
+				fi
+			;;
+			ACL)
+				# Replace or add all MACs for the given interface
+				# There is one ACL list for all interfaces. 
+				# --> Need to loop on all ACL list. If MAC belongs to the same interface or is unused (pcpeId==-1) then replace it, else skip.
+				# If end of list reached, new entries will be added and the count will be increased.
+				i=0
+				if_instance_cpeId=`expr $if_instance + 1`
+				ugw_section=wlan_mac_control
+				for mac in $value
+				do
+					# Skip  MAC addresses that belong to different interfaces (but reuse MACs with pcpeId -1)
+					eval ugw_pcpeId=\${wlmacctrl_${i}_pcpeId}
+					while [ "$ugw_pcpeId" != "" ] && [ "$ugw_pcpeId" != "$if_instance_cpeId" ] && [ "$ugw_pcpeId" != "-1" ] 
+					do
+						let i=i+1
+						eval ugw_pcpeId=\${wlmacctrl_${i}_pcpeId}
+					done
+					# Add the three needed parameters for this entry: cpeId, pcpeId, macAddr
+					ugw_param=wlmacctrl_${i}_cpeId
+					ugw_value=`expr $i + 1`
+					rc_conf_set
+					
+					ugw_param=wlmacctrl_${i}_pcpeId
+					ugw_value=$if_instance_cpeId
+					rc_conf_set
+
+					ugw_param=wlmacctrl_${i}_macAddr
+					ugw_value=$mac
+					rc_conf_set
+
+					let i=i+1
+				done
+				 
+				# If the number of ACLs to this interface decreased, delete all remaining related MACs
+				# This will be done by changing the pcpeId value, so that this entry is ignored by get operations. (the total length of the list will never decrease with this API)
+				while [ $i -lt $wlan_mac_control_Count ]
+				do
+					eval ugw_pcpeId=\${wlmacctrl_${i}_pcpeId}
+					if [ "$ugw_pcpeId" == "$if_instance_cpeId" ] 
+					then
+						ugw_param=wlmacctrl_${i}_pcpeId
+						ugw_value="-1"
+						rc_conf_set
+					fi
+					let i=i+1
+				done
+				# If the total number of MACs increased, update the counters
+				if [ $i -gt $wlan_mac_control_Count ]
+				then 
+					ugw_param=wlan_mac_control_Count
+					ugw_value=$i
+					rc_conf_set
+					
+					ugw_section=next_cpeid
+					ugw_param=wlan_mac_control_nextCpeId
+					ugw_value=`expr $i + 1`
+					rc_conf_set
+				fi
+                                ugw_section=""
+			;;
+			PeerAPMacs)
+				# Replace or add all MACs for the given interface
+				# There is one ACL list for all interfaces. 
+				# --> Need to loop on all ACL list. If MAC belongs to the same interface or is unused (pcpeId==-1) then replace it, else skip.
+				# If end of list reached, new entries will be added and the count will be increased.
+				# REMARK: This implementation is very similar to ACL parameter, so make sure all code changes are applied to both parameters!
+				i=0
+				if_instance_cpeId=`expr $if_instance + 1`
+				ugw_section=wlan_wds_macs
+				for mac in $value
+				do
+					# Skip  MAC addresses that belong to different interfaces (but reuse MACs with pcpeId -1)
+					eval ugw_pcpeId=\${wlwdsmac_${i}_pcpeId}
+					while [ "$ugw_pcpeId" != "" ] && [ "$ugw_pcpeId" != "$if_instance_cpeId" ] && [ "$ugw_pcpeId" != "-1" ] 
+					do
+						let i=i+1
+						eval ugw_pcpeId=\${wlwdsmac_${i}_pcpeId}
+					done
+					
+					# Add the three needed parameters for this entry: cpeId, pcpeId, macAddr
+					ugw_param=wlwdsmac_${i}_cpeId
+					ugw_value=`expr $i + 1`
+					rc_conf_set
+					
+					ugw_param=wlwdsmac_${i}_pcpeId
+					ugw_value=$if_instance_cpeId
+					rc_conf_set
+
+					ugw_param=wlwdsmac_${i}_peerAP
+					ugw_value=$mac
+					rc_conf_set
+
+					let i=i+1
+				done
+				
+				# If the number of ACLs to this interface decreased, delete all remaining related MACs
+				# This will be done by changing the pcpeId value, so that this entry is ignored by get operations. (the total length of the list will never decrease with this API)
+				while [ $i -lt $wlan_wds_macs_Count ]
+				do
+					eval ugw_pcpeId=\${wlwdsmac_${i}_pcpeId}
+					if [ "$ugw_pcpeId" == "$if_instance_cpeId" ] 
+					then
+						ugw_param=wlwdsmac_${i}_pcpeId
+						ugw_value="-1"
+						rc_conf_set
+					fi
+					let i=i+1
+				done
+				# If the total number of MACs increased, update the counters
+				if [ $i -gt $wlan_wds_macs_Count ]
+				then 
+					ugw_param=wlan_wds_macs_Count
+					ugw_value=$i
+					rc_conf_set
+					
+					ugw_section=next_cpeid
+					ugw_param=wlan_wds_macs_nextCpeId
+					ugw_value=`expr $i + 1`
+					rc_conf_set
+				fi
+                                ugw_section=""
+			;;
+			CoCPower)
+			        value_tmp=$value
+			        value_size=`echo $value | sed 's/[^" "]*//g' | wc -c`
+			        #value_size=`echo $value | wc -w`
+			        if [ "$value_size" = "3" ]
+			        then
+			                max_antenna=`echo $value | awk '{print $3}'`
+			                ugw_param=wlcoc_${if_instance}_numAntennas
+			                value_tmp=$max_antenna
+			                ugw_value=$value_tmp
+			                rc_conf_set
+			                #rc_conf_set wlan_coc wlcoc_${if_instance}_numAntennas $max_antenna
+			        fi
+			        ugw_param=wlcoc_${if_instance}_autoCoC
+			        value_tmp=`echo $value | awk '{print $1}'`
+			        ugw_value=$value_tmp
+			;;
+ 			CoCAutoCfg)
+                                timer_interval1=`echo $value | awk '{print $1}'`
+                                timer_interval2=`echo $value | awk '{print $2}'`
+                                timer_interval3=`echo $value | awk '{print $3}'`
+                                high_limit1=`echo $value | awk '{print $4}'`
+                                low_limit2=`echo $value | awk '{print $5}'`
+                                high_limit2=`echo $value | awk '{print $6}'`
+                                low_limit3=`echo $value | awk '{print $7}'`
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_autoCoC1x1TimerInterval
+				ugw_value=$timer_interval1
+				rc_conf_set
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_autoCoC2x2TimerInterval
+				ugw_value=$timer_interval2
+				rc_conf_set
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_autoCoC3x3TimerInterval
+				ugw_value=$timer_interval3
+				rc_conf_set
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_autoCoC1x1HighLimit
+				ugw_value=$high_limit1
+				rc_conf_set
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_autoCoC2x2LowLimit
+				ugw_value=$low_limit2
+				rc_conf_set
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_autoCoC2x2HighLimit
+				ugw_value=$high_limit2
+				rc_conf_set
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_autoCoC3x3LowLimit
+				ugw_value=$low_limit3
+				rc_conf_set
+				# should not call rc_conf_set any more
+				ugw_section=""
+			;;
+			pCoCAutoCfg)
+				# Set the interval to check the traffic, the low and high thresholds for the Power CoC(CPU frequecy OTF).
+				pCoCIntval=`echo $value | awk '{print $1}'`
+				pCoCLowThreshold=`echo $value | awk '{print $2}'`
+				pCoCUpperThreshold=`echo $value | awk '{print $3}'`
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_pCocIntvl
+				ugw_value=$pCoCIntval
+				rc_conf_set
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_pCocLowThreshold
+				ugw_value=$pCoCLowThreshold
+				rc_conf_set
+				ugw_section=wlan_coc
+				ugw_param=wlcoc_${if_instance}_pCocUpperThreshold
+				ugw_value=$pCoCUpperThreshold
+				rc_conf_set
+				ugw_section=""
+			;;
+ 			FwRecovery)
+				fwFast_enabled=`echo $value | awk '{print $1}'`
+				fwFull_enabled=`echo $value | awk '{print $2}'`
+				complete_enabled=`echo $value | awk '{print $3}'`
+				timer=`echo $value | awk '{print $4}'`
+				dump=`echo $value | awk '{print $5}'`
+				# set enabled and lim parameters
+				recovery_type="fwFast"
+				for count in 1 2
+				do
+					eval enabled=\${${recovery_type}_enabled}
+					if [ "$enabled" = "0" ]
+					then
+						#config enable/disable only
+						rc_conf_set wlan_vendor_wave wlwave_${if_instance}_${recovery_type}RecoverEna 0
+					else
+						#config enable/disable
+						rc_conf_set wlan_vendor_wave wlwave_${if_instance}_${recovery_type}RecoverEna 1
+						#config Limit
+						rc_conf_set wlan_vendor_wave wlwave_${if_instance}_${recovery_type}RecoverLim $enabled
+					fi
+					recovery_type="fwFull"
+				done
+				#config other parameters:
+				rc_conf_set wlan_vendor_wave wlwave_${if_instance}_fwCompleteRecoverEna $complete_enabled
+				rc_conf_set wlan_vendor_wave wlwave_${if_instance}_fwRecoverTimer $timer
+				rc_conf_set wlan_vendor_wave wlwave_${if_instance}_fwAutoRecoverDumpEna $dump
+				#ignor additional configuration:
+				ugw_section=""
+			;;
+			boostMode)
+				# 3 values: 11b-boost Auto-response-boost Low-OFDM-modulation-boost
+				dot11b_boost=`echo $value | awk '{print $1}'`
+				Auto_response_boost=`echo $value | awk '{print $2}'`
+				Low_OFDM_modulation_boost=`echo $value | awk '{print $3}'`
+				#config other parameters:
+				rc_conf_set wlan_vendor_wave wlwave_${if_instance}_11bBoost $dot11b_boost
+				rc_conf_set wlan_vendor_wave wlwave_${if_instance}_autoResponseBoost $Auto_response_boost
+				rc_conf_set wlan_vendor_wave wlwave_${if_instance}_lowOfdmModulationBoost $Low_OFDM_modulation_boost
+				#ignor additional configuration:
+				ugw_section=""
+			;;
+			*)
+				echo "$param tricky, not implemented yet" > /dev/console
+				ugw_value="$param doesn't need to be updated"
+			;;
+		esac	
+	fi
+}
+
+
+#add definitions of error codes. The status_oper application error codes are (-3) and (-4)
+#but result in $? as 253 and 252
+SEC_NOT_FOUND=253
+PARAM_NOT_FOUND=252
+
+# Following variables must be set before calling rc_conf_set:
+# CONFIGS_PATH, ugw_section, ugw_param, ugw_value
+rc_conf_set()
+{
+	#When called from add_vap it gets parameters. See if parameters exist on call
+	if [ ! -z "$1" ]
+	then
+		ugw_section=$1
+		ugw_param=$2
+		ugw_value=$3
+	fi
+	# Since rc_conf_set is always called upon set command, in case there is no need
+	# to update the parameter (some special cases for some special parameters), set 
+	# ugw_section to empty string - this will indicate "do nothing" to rc_conf_set
+	if [ "$ugw_section" == "" ]; then return; fi
+	
+	if [ -e /tmp/rc.conf.mod ]
+	then
+		#start from new file
+		rm /tmp/rc.conf.mod
+	fi
+	# Define which conf file is to be updated
+	if [ "$ugw_section" = "wlan_wave300" ]
+	then
+		CONF_FILE=$CONFIGS_PATH/wave300.conf
+                destination=wave300
+	else
+		CONF_FILE=$CONFIGS_PATH/rc.conf
+                destination=rc
+	fi
+	print2log DBG "host_api: ugw_section=$ugw_section ugw_param=$ugw_param ugw_value=$ugw_value CONF_FILE=$CONF_FILE"
+
+        # Find out if param already exists
+        if [ "$ugw_section" = "wlan_wave300" ]
+        then
+        	update_byte_count=0
+
+                # Safe read of file
+                PID_WAVE300=$$
+                /usr/sbin/syscfg_lock $CONFIGS_PATH/wave300.conf "
+                        param_found=\`grep -c \"\<$ugw_param\>\" $CONFIGS_PATH/wave300.conf\`
+                        if [ \$param_found -gt 0 ]
+                        then
+                                cp $CONFIGS_PATH/wave300.conf /tmp/rc.conf.mod$PID_WAVE300
+                                sed -i 's/^'$ugw_param'=.*\"/'$ugw_param'=\\\"'\"$ugw_value\"'\\\"/' $CONFIGS_PATH/wave300.conf
+                        fi
+                "
+                # Can't use param_found from safe file access above, see if parameter exist
+                # rc.conf.mod$PID_WAVE300 - exist only if param found
+                if [ -e /tmp/rc.conf.mod$PID_WAVE300 ]
+                then
+                    param_found=1
+                    rm -f /tmp/rc.conf.mod$PID_WAVE300
+                else
+                    param_found=0
+                fi
+        else
+                #apply status_oper, 0=success, 252=param not found, 253=section not found
+                print2log DBG "host_api: status_oper- $ugw_section $ugw_param $ugw_value"
+                #Status_oper use lock on file access, therefore can use $CONFIGS_PATH/rc.conf
+                status_oper -u -f $CONFIGS_PATH/rc.conf SET $ugw_section $ugw_param "$ugw_value" 2> /dev/null
+                status_oper_error=$?
+                print2log DBG "host_api: status_oper- ?=$status_oper_error"
+                param_found=1
+                if [ $status_oper_error -gt 0 ]
+                then
+                        param_found=0
+                        if [ $status_oper_error = $SEC_NOT_FOUND ]
+                        then
+                                print2log DBG "host_api: section not found- add one"
+                        elif [ $status_oper_error != $PARAM_NOT_FOUND ]
+                        then
+                                echo "ERROR in host_api: status_oper error code=$status_oper_error, your host_api command failed" > /dev/console
+                                exit_safe
+                        fi
+                fi
+        fi
+        print2log DBG "host_api: param_found=$param_found"
+
+        if [ $param_found = 0 ] 
+        then
+                print2log DBG "host_api: param not found - add it"
+                # Add parameter:
+                # The next sed command create file - name add_param_file_X (X=pid), and run the file under rc.conf lock
+                # TODO- use conf_type index in the parameter name (should be index in command)
+                sed -n '/#add_param_safe'"$param1"'/,/#add_param_safe'"$param2"'/p' /bin/host_api > /tmp/add_param_file_$$
+                sed -i -e "1d" /tmp/add_param_file_$$ 
+                sed -i '$ d' /tmp/add_param_file_$$
+                run_add_param_safe $$ $ugw_section $ugw_param $ugw_value $destination
+        fi
+}
+
+
+# run_add_param_safe: safely add parameter (and section if not exist)
+# It gets lock on rc.conf and execute created file
+run_add_param_safe()
+{        
+        chmod a+x /tmp/add_param_file_$1
+        
+        print2log DBG "host_api: run add_param_file_$1"
+        
+        # Safely run the file
+        # PID in file name ensures safe execution
+        # Use double quote to use parameters
+        # Single quote not allow parameter to get inside
+
+        /usr/sbin/syscfg_lock $CONFIGS_PATH/rc.conf "
+        /usr/sbin/rcconf_chk $CONFIGS_PATH/rc.conf
+        error=\$?
+        if [ \$error -ne 0 ]
+        then
+            echo run_add_param_safe: Error in rc.conf file sanity > /dev/console
+            exit 1
+        fi
+        # params: pid ugw_section ugw_param ugw_value destination
+        /tmp/add_param_file_$1 $2 $3 $4 $5
+        "
+        rm -f /tmp/add_param_file_$1
+}
+
+
+####################################################################
+# dummy() - dummy handler, encapsulate code that will be coppy to a file
+#
+dummy()
+{
+# START write to file
+# WARNING- don't delete next comment (add_param_...and !/bin/sh).
+# It is string input to sed application
+
+#add_param_safe_start
+#!/bin/sh
+
+. /tmp/mtlk_init_platform.sh 2> /dev/null
+
+print_section ()
+{
+       conf_file=$2
+       print2log DBG "host_api: print_section- conf_file=$conf_file"
+       awk -v sec_name=$1 'BEGIN {sec_found=0} {if (sec_found==1) print $0; if ($1 == "#<<" && $2 == sec_name) sec_found=1; if ($1 == "#>>" && $2 == sec_name) sec_found=0} ' $conf_file
+}
+
+get_section_length ()
+{
+       exec_script=$2
+       print2log DBG "host_api: get_section_length- script=$exec_script"
+       if [ -z $exec_script ]
+       then
+               exec_script=$CONFIGS_PATH/rc.conf
+       fi
+       section_length=`print_section $1 $exec_script | wc -c`
+       print2log DBG "host_api: get_section_length- section_length=$section_length"
+       let section_length=$section_length+1
+       echo $section_length
+}
+
+update_section_byte_length()
+{
+    ugw_section=$1
+    #Update section word count before change exist parameter
+    length=`get_section_length $ugw_section $CONFIGS_PATH/rc.conf`
+    #Write the new word count
+    sed -i 's/^#<< \<'$ugw_section'\>.*/#<< '$ugw_section' ##'$length'/' $CONFIGS_PATH/rc.conf
+}
+
+# rc_conf_add_parameter()
+# Add parameters and sections
+rc_conf_add_parameter()
+{
+        ugw_section=$1
+        ugw_param=$2
+        ugw_value=$3
+        destination=$4
+        print2log DBG "host_api: rc_conf_add_parameter- $ugw_section, $ugw_param, $ugw_value, $destination"
+        # if no destination given use rc.conf file (TODO- is it OK?):
+        if [ -z $destination ]; then decho "file name empty" > /dev/console; return 1; fi
+
+        if [ "$destination" = "rc" ]
+        then
+            # Safe copy rc.conf
+            cp $CONFIGS_PATH/$destination.conf $CONFIGS_PATH/rc.conf
+            # Test if need also section
+            section_found=`grep -c "#<< $ugw_section" $CONFIGS_PATH/rc.conf`
+            
+            if [ $section_found = 0 ]
+            then
+                 print2log DBG "host_api: Need to add section"
+                #Need to add section
+                # Note- must add line before and after ! else status_oper error result
+                echo >> $CONFIGS_PATH/rc.conf
+                echo "#<< $ugw_section" >> $CONFIGS_PATH/rc.conf
+                echo "${ugw_section}_Count="1"" >> $CONFIGS_PATH/rc.conf
+                echo "#>> $ugw_section" >> $CONFIGS_PATH/rc.conf
+                echo >> $CONFIGS_PATH/rc.conf
+	        update_section_byte_length $ugw_section
+            fi
+        fi
+
+        #add/change parameter:
+        param_found=`grep -c "\<$ugw_param\>" $CONFIGS_PATH/$destination.conf`
+        if [ $param_found != 0 ]
+        then
+            #change parameter's value
+            sed -i 's/^'$ugw_param'=.*/'$ugw_param'="'$ugw_value'"/' $CONFIGS_PATH/$destination.conf
+        else
+                #add parameter
+                sed -i '/#>> '$ugw_section'$/i'$ugw_param'="'$ugw_value'"' $CONFIGS_PATH/$destination.conf
+        fi
+        if [ "$destination" = "rc" ]
+        then
+            update_section_byte_length $ugw_section $destination
+        fi
+}
+
+# execute command:
+rc_conf_add_parameter $1 $2 $3 $4
+
+#add_param_safe_end
+
+# END write to file
+# WARNING- don't delete comment above (add_param_...)
+# It is string input to sed application
+}
+
+
+# The set command - In the UGW implementation, convert param name from MTLK to UGW and set into rc.conf
+set_param()
+{
+	if [ "$param" = "" ]
+	then
+		print2log WARNING "Parameter missing in set command"
+		usage
+	fi
+	cli_exec_script=`awk -F "," -v "param=$param" '$1 == param { script=$12; print script}' $CSV_FILE`
+
+	# Add script to 'CLI_EXEC_LIST' file for use by 'apply' command
+        # Add it only if not exist in it already
+        # Add only if not empty (will be empty for wave300.conf parameters)
+        if [ ! -z $cli_exec_script ]
+        then
+                script_in_file=`grep -l -w "$ETC_PATH/$cli_exec_script $if_instance" $CLI_EXEC_LIST 2> /dev/null`
+                if [ -z $script_in_file ]
+                then
+                        echo "$ETC_PATH/$cli_exec_script $if_instance" >> $CLI_EXEC_LIST
+                fi
+        fi
+
+	# Update is_special_param and ugw_param
+	convert_name_MTLK_to_UGW $param
+
+	if [ "$is_special_param" = "yes" ]
+	then
+		handle_special_param SET_PARAM
+	else
+		ugw_value=$value
+	fi
+	# Save the parameter in rc.conf
+	rc_conf_set
+}
+
+
+
+# The get command - In the UGW implementation, convert param name from MTLK to UGW and read value from rc.conf
+get_param()
+{
+	req_param=$1
+	if [ "$req_param" = "" ]
+	then
+		print2log WARNING "Parameter missing in get command"
+		usage
+	fi
+
+	if [ "$conf_type" = "hw_wlan0" ] 
+	then
+		value=`grep "\<$req_param\>" /flash/hw_wlan0.ini | sed 's#^[^=]*=[ ]*##'`
+	elif [ "$conf_type" = "hw_wlan1" ] 
+	then
+		value=`grep "\<$req_param\>" /flash/hw_wlan1.ini | sed 's#^[^=]*=[ ]*##'`
+	else
+		# Update is_special_param and ugw_param
+		convert_name_MTLK_to_UGW $req_param
+
+		if [ "$is_special_param" = "yes" ]
+		then
+			eval ugw_value=\$$ugw_param
+			value=`handle_special_param GET_PARAM`
+		else
+			eval value=\$$ugw_param
+		fi
+#		if [ ! "$value" ]; then print2log WARNING "config get $req_param not found"; fi
+	fi	
+	echo "$value"
+}
+
+# The get all command - In the UGW implementation, read all wls sections from rc.conf and return a list containing them all.
+# Convert param name from UGW to MTLK if the param has a MTLK equivalent.
+# This function receives one optional parameter - the section name.
+# If not stated, all parameters relevant for given type of interface are returned,
+# if stated only parameters from this section (object) are returned.
+# For instance, if this parameter is set to wlan_main and the interface is physical AP,
+# following parameters and their values will be returned:
+#   ESSID, HiddenSSID, APforwarding, wlanInterfaceCount, apEnable
+# get_all function uses awk to parse the table of parameters. To better understand the awk command, use following scheme:
+#   $1 is a MTLK param name
+#   $4 indicates if the parameter is relevant for physical AP (0), VAP (1) or STA (2)
+# The UGW name is constructed from section name or prefix and UGW param name:
+#   $6 is a section name for the parameter in rc.conf
+#           (if it's wlan_phy, additional translation needed for MBSS)
+#   $7 is a prefix name for the parameter in rc.conf
+#   $8 is a translated UGW param name in rc.conf
+#   $9 and $10 are only present for special parameters
+#   $11 is only present for those parameters who have special indexing (such as _Count or _1_0 )
+get_all_params()
+{
+	# Create file in following format:
+	#	SP_1=<name of first parameter that needs special treatment>
+	#	UGW_SP_1=<ugw equivalent for the parameter, ready to be get from rc.conf>
+	#	SP_2=<name of second parameter that needs special treatment>
+	#	UGW_SP_2=<ugw equivalent for the parameter, ready to be get from rc.conf>
+	#	...
+	#	NUM_OF_SPS=<...>
+	#	RP_1=<name of first "regular" parameter>
+	#	UGW_RP_1=<ugw equivalent for the parameter, ready to be get from rc.conf>
+	#	RP_2=<name of second parameter>
+	#	UGW_RP_2=<ugw equivalent for the parameter, ready to be get from rc.conf>
+	#	...
+	#	NUM_OF_RPS=<...>
+	ALL_PARAM_LIST_FILE=/tmp/mtlk_params_list
+	rm -f ${ALL_PARAM_LIST_FILE}
+
+	# Check if requested specific object or all parameters
+	ppatern=$1
+	if [ "$ppatern" == "" ]; then ppatern=\*\*; fi
+	
+	awk -F "," -v "ppatern=$ppatern" -v "if_instance_init=$if_instance"  -v "if_type=$if_type" -v "phy_instance=$phy_instance" -v "instance_cpe=$instance_cpe" \
+	  'BEGIN {j = 0; k = 0} \
+      {if_instance=if_instance_init; if (index($4, if_type)!=0 && match($6,ppatern)!=0) \
+        {if ($9 == "" && $10 == "") \
+            {k = k + 1; print "RP_"k"="$1; \
+            if ($11 == "Count") {print "UGW_RP_"k"="$6"_Count"} else \
+            {if ($6 == "wlan_phy" || $6 == "wlan_wave300") {if_instance=phy_instance}; \
+             if ($11 == "") {ifx="_"if_instance} \
+			 else {if ($11 == "no_indexing") {ifx=""} \
+				   else {ifx=instance_cpe; if ($11 == "_n") {ifx=ifx"_"if_instance} else {ifx=ifx$11}}}; \
+			print "UGW_RP_"k"="$7ifx"_"$8 }} \
+        else \
+            {j = j + 1; print "SP_"j"="$1;  \
+            if ($11 == "Count")  {print "UGW_SP_"j"="$6"_Count"} else \
+            {if ($6 == "wlan_phy" || $6 == "wlan_wave300") {if_instance=phy_instance}; \
+             if ($11 == "") {ifx="_"if_instance} \
+ 			 else {if ($11 == "no_indexing") {ifx=""} \
+				   else {ifx=instance_cpe; if ($11 == "_n") {ifx=ifx"_"if_instance} else {ifx=ifx$11}}}; \
+			print "UGW_SP_"j"="$7ifx"_"$8}}}} \
+      END {print "NUM_OF_RPS="k; print "NUM_OF_SPS="j}' $CSV_FILE >> ${ALL_PARAM_LIST_FILE}
+	# Use the results of awk by including the temp conf file (together with rc.conf)
+	. ${ALL_PARAM_LIST_FILE} 2> /dev/null
+	# For every special parameter, call get_param
+	# If the csv file contains heading line, ignore it
+	if [ "$SP_1" = "MTLK_Name" ]; then i=2; else i=1; fi
+	while [ $i -le $NUM_OF_SPS ]
+	do
+		eval param=\${SP_$i}
+		eval ugw_param=\${UGW_SP_$i}
+		eval ugw_value=\$$ugw_param
+		echo "$param=`handle_special_param GET_PARAM`"
+		let i=$i+1
+	done
+	# For every regular parameter, get it's value from rc.conf using name translation
+	i=1
+	while [ $i -le $NUM_OF_RPS ]
+	do
+		eval param=\${RP_$i}
+		eval ugw_param=\${UGW_RP_$i}
+		eval ugw_value=\$$ugw_param
+		echo "$param=$ugw_value"
+		let i=$i+1
+	done
+}
+
+
+# Commit changes to all configuration files and to flash.
+# Call update script. This will create all conf files. Then save to flash - using UGW API.
+# NOTES: 
+# 1. In the UGW implementation, wireless configuration files (e.g. hostapd.conf) 
+#    aren't saved on flash, and will be regenerated with each reboot.
+# 2. This script generates all wireless configuration files, but doesn't reconfigure 
+#    the wireless interface.
+# 3. Generating configuration files is unneeded for this stage - but we would like to be 
+#    able to reload wireless without reboot.
+commit()
+{	
+	write_to_flash	
+        mv $CLI_EXEC_LIST $CLI_EXEC_LIST_PREV 2> /dev/null
+        if [ -w /ramdisk_copy/flash/wave300.conf ]
+        then
+                /usr/sbin/syscfg_lock $CONFIGS_PATH/wave300.conf "
+                        cp $CONFIGS_PATH/wave300.conf /ramdisk_copy/flash/wave300.conf
+                "
+        else
+        	print2log WARN "Unable to save wave300.conf persistently - read-only filesystem"
+        fi
+} 
+
+write_to_flash()
+{
+	$ETC_PATH/backup	
+}
+
+
+#########################################################################
+# shared_code_to_file - dummay handler, encapsulate code that is copied
+#                           to add_vap and del_vap run time created files
+#
+shared_code_to_file()
+{
+# START write to file:
+# WARNING- don't delete comment below (shared_code_safe...)
+# It is string input to sed application (also /bin/sh)
+
+#shared_code_safe_sec_start
+#!/bin/sh
+
+. /tmp/rc.conf_$1 2> /dev/null
+
+. /tmp/mtlk_init_platform.sh 2> /dev/null
+
+print2log DBG "host_api: source /tmp/rc.conf_$1"
+
+if_instance=$2
+
+##################################
+# Handler: print_section
+print_section()
+{
+       conf_file=$2
+       awk -v sec_name=$1 'BEGIN {sec_found=0} {if (sec_found==1) print $0; if ($1 == "#<<" && $2 == sec_name) sec_found=1; if ($1 == "#>>" && $2 == sec_name) sec_found=0} ' $conf_file
+}
+
+##################################
+# Handler: get_safe_section_length
+get_safe_section_length()
+{
+       script_=$2
+       if [ -z $script_ ]
+       then
+               script_=$CONFIGS_PATH/rc.conf
+       fi
+
+       section_length=`print_section $1 $script_ | wc -c`
+       let section_length=$section_length+1
+       print2log DBG "host_api: get_safe_section_length- script_=$script_, 1=$1, section_length=$section_length"
+       echo $section_length
+}
+
+##################################
+# Handler: update_length
+update_length()
+{
+        ugw_section=$1
+        length=`get_safe_section_length $ugw_section $CONFIGS_PATH/rc.conf`
+        #Write the new byte count
+        sed -i 's/^#<< \<'$ugw_section'\>.*/#<< '$ugw_section' ##'$length'/' $CONFIGS_PATH/rc.conf
+}
+
+##################################
+# Handler: rc_conf_safe_set
+# Configure parameter and update section byte count
+rc_conf_safe_set()
+{
+        ugw_section=$1
+        ugw_param=$2
+        ugw_value=$3
+        
+        print2log DBG "host_api: rc_conf_safe_set- ugw_section=$ugw_section, ugw_param=$ugw_param, ugw_value=$ugw_value"
+        #update parameter:
+        sed -i 's/^'$ugw_param'=.*"/'$ugw_param'="'"$ugw_value"'"/' $CONFIGS_PATH/rc.conf
+
+        # update byte count:
+        update_length $ugw_section
+}
+
+#shared_code_safe_sec_end
+
+# END Write to file
+# WARNING- don't delete comment above (shared_code_safe...).
+# It is string input to sed application
+}
+
+
+
+###################################################################
+# add_vap - create file with add_vap() code
+#
+add_vap()
+{	
+        # The next sed comamnd copy code between two tags to a file, then it calls handler to run the file
+        #add shared code
+        sed -n '/#shared_code_safe_sec'"$param1"'/,/#shared_code_safe_sec'"$param2"'/p' /bin/host_api  > /tmp/add_vap_file_$$
+        #add add_vap code
+        sed -n '/#add_vap_safe_sec'"$param1"'/,/#add_vap_safe_sec'"$param2"'/p' /bin/host_api  >> /tmp/add_vap_file_$$
+        sed -i -e "1d" /tmp/add_vap_file_$$ 
+        sed -i '$ d' /tmp/add_vap_file_$$
+        run_add_vap_safe $$ $if_instance
+}
+
+
+###################################################################
+# add_vap_to_file - dummay handler, encapsulate code that is copy to a file
+#
+add_vap_to_file()
+{	
+
+# START write to file:
+# WARNING- don't delete comment below (add_vap_safe...)
+# It is string input to sed application
+
+#add_vap_safe_sec_start
+
+
+##################################
+# Handler: rc_conf_add_params
+rc_conf_add_params()
+{
+        ugw_section=$1
+        ugw_param=$2
+        ugw_value=$3
+
+        sed -i '/#>> '$ugw_section'$/i'$ugw_param'="'$ugw_value'"' $CONFIGS_PATH/rc.conf
+
+       print2log DBG "host_api: rc_conf_add_params- ugw_section=$ugw_section, ugw_param=$ugw_param, ugw_value=$ugw_value"
+}
+
+
+##################################
+#rc.conf file validation
+
+/usr/sbin/rcconf_chk $CONFIGS_PATH/rc.conf
+error=$?
+if [ $error -ne 0 ]
+then
+    echo host_api: Critical error at rc.conf file sanity > /dev/console
+    exit 1
+fi
+
+#************start wlan_main section config****************
+let wlmnPcpeIdVal=$if_instance+1
+let radioCpeIdVal=$if_instance+1
+let vap_id=$wlan_main_nextCpeId-1
+apName="MyAP_${if_instance}.${vap_id}"
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_cpeId  $wlan_main_nextCpeId
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_pcpeId  $wlmnPcpeIdVal
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_radioCpeId $radioCpeIdVal
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_apEnable 1
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_apName $apName
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_apType 1
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_ssid "\\\x74\\\x65\\\x73\\\x74\\\x5f\\\x76\\\x61\\\x70"
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_ssidMode 0
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_bssidOverride 0
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_bssid ""
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_basicDataRate "1.0,2.0,5.5,11.0"
+# Get config from parent:
+eval operDataRate='$'wlmn_${if_instance}_operDataRate
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_operDataRate $operDataRate
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_maxBitRate "0.0"
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_vlanId 0
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_apIsolationEna 0
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_wmmEna 1
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_uapsdEna 0
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_uapsdMaxSpLength 4
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_wdsEna 0
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_maxSta 32
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_minSta 0
+eval netMode='$'wlmn_${if_instance}_networkMode
+rc_conf_add_params wlan_main wlmn_${wlan_main_Count}_networkMode $netMode
+let wlan_main_Count=$wlan_main_Count+1
+
+#************start wlan_1x section config*********************
+#wlan_main is the parent
+let _1xPcpeIdVal=$wlan_main_nextCpeId
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_cpeId  $wlan_1x_nextCpeId
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_pcpeId  ${_1xPcpeIdVal}
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_grpKeyEna 1
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_grpKeyIntvl 3600
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_wpa2PreAuthEna 0
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_reAuthIntvl 3600
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_localRadius ""
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_authType 0
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_authProto 0
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_radiusIP "192.168.1.1"
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_radiusPort 1812
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_radiusSecret "\\\x4e\\\x45\\\x57\\\x5f\\\x52\\\x41\\\x44\\\x49\\\x55\\\x53\\\x5f\\\x53\\\x45\\\x43\\\x52\\\x45\\\x54"
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_domainName ""
+rc_conf_add_params wlan_1x wl1x_${wlan_1x_Count}_userName ""
+let wlan_1x_Count=$wlan_1x_Count+1
+
+#************start wlan_psk section config*********************
+let wlan_psk_Count=$wlan_psk_Count+1
+#wlan_main is the parent
+let pskPcpeIdVal=$wlan_main_nextCpeId
+let psk_index=$wlan_main_nextCpeId
+rc_conf_add_params wlan_psk wlpsk${psk_index}_0_cpeId  $wlan_psk_nextCpeId
+rc_conf_add_params wlan_psk wlpsk${psk_index}_0_pcpeId  $pskPcpeIdVal
+rc_conf_add_params wlan_psk wlpsk${psk_index}_0_pskFlag 0
+rc_conf_add_params wlan_psk wlpsk${psk_index}_0_passPhrase "\\\x4e\\\x45\\\x57\\\x5f\\\x50\\\x41\\\x53\\\x53\\\x5f\\\x50\\\x48\\\x52\\\x41\\\x53\\\x45"
+rc_conf_add_params wlan_psk wlpsk${psk_index}_0_psk ""
+
+#************start wlan_wep section config*********************
+#wlan_main is the parent
+let wepPcpeIdVal=$wlan_main_nextCpeId
+numWep=4
+i=0
+let wep_index=$wlan_main_nextCpeId
+while [ "$i" -lt "$numWep" ]
+do
+    rc_conf_add_params wlan_wep wlwep${wep_index}_${i}_cpeId  $wlan_wep_nextCpeId
+    rc_conf_add_params wlan_wep wlwep${wep_index}_${i}_pcpeId $wepPcpeIdVal
+    rc_conf_add_params wlan_wep wlwep${wep_index}_${i}_key "123456789abcdef0123456789a"
+    let i=$i+1
+    let wlan_wep_nextCpeId=$wlan_wep_nextCpeId+1
+done
+let wlan_wep_Count=$wlan_wep_Count+4
+
+#************start wlan_ap_wmm section config*********************
+#wlan_main is the parent
+let wlawmmPcpeIdVal=$wlan_main_nextCpeId
+numWmmAccessCategories=4
+i=0
+let ap_wmm_index=$wlan_main_nextCpeId
+while [ "$i" -lt "$numWmmAccessCategories" ]
+do
+    rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_cpeId  $wlan_ap_wmm_nextCpeId
+    rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_pcpeId $wlawmmPcpeIdVal
+    case $i in
+    0)
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_ECWmin 4
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_ECWmax 6
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_AIFSN 3
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_TXOP 0
+    ;;
+    1)
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_ECWmin 4
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_ECWmax 10
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_AIFSN 7
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_TXOP 0
+    ;;
+    2)
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_ECWmin 3
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_ECWmax 4
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_AIFSN 1
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_TXOP 94
+    ;;
+    3)
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_ECWmin 2
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_ECWmax 3
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_AIFSN 1
+        rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_TXOP 47
+    ;;
+    esac	
+    rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_AckPolicy 0
+    rc_conf_add_params wlan_ap_wmm wlawmm${ap_wmm_index}_${i}_AdmCntrl 0
+    let i=$i+1
+    let wlan_ap_wmm_nextCpeId=$wlan_ap_wmm_nextCpeId+1
+done
+let wlan_ap_wmm_Count=$wlan_ap_wmm_Count+4
+
+#************start wlan_sta_wmm section config*********************
+let wlswmmPcpeIdVal=$wlan_main_nextCpeId #wlan_main is the parent
+numWmmAccessCategories=4
+i=0
+let sta_wmm_index=$wlan_main_nextCpeId
+while [ "$i" -lt "$numWmmAccessCategories" ]
+do
+    rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_cpeId  $wlan_sta_wmm_nextCpeId
+    rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_pcpeId $wlswmmPcpeIdVal
+    case $i in
+    0)
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_ECWmin 4
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_ECWmax 10
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_AIFSN 3
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_TXOP 0
+    ;;
+    1)
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_ECWmin 4
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_ECWmax 10
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_AIFSN 7
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_TXOP 0
+    ;;
+    2)
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_ECWmin 3
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_ECWmax 4
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_AIFSN 2
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_TXOP 94
+    ;;
+    3)
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_ECWmin 2
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_ECWmax 3
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_AIFSN 2
+        rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_TXOP 47
+    ;;
+    esac	
+    rc_conf_add_params wlan_sta_wmm wlswmm${sta_wmm_index}_${i}_AckPolicy 0
+    let i=$i+1
+    let wlan_sta_wmm_nextCpeId=$wlan_sta_wmm_nextCpeId+1
+done
+let wlan_sta_wmm_Count=$wlan_sta_wmm_Count+4
+
+#************start wlan_wps section config*********************
+let wlan_wps_Count=$wlan_wps_Count+1
+#wlan_main is the parent
+let wpsPcpeIdVal=$wlan_main_nextCpeId
+let wps_index=$wlan_main_nextCpeId
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_cpeId  $wlan_wps_nextCpeId
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_pcpeId  $wpsPcpeIdVal
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_enable 0
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_enrolleeEna 0
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_proxyEna 0
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_intRegsEna 0
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_apDevName "LTQ-WLAN-ROUTER"
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_PIN "12345678"
+# Get config from parent:
+eval cfgMthds='$'wlwps${if_instance}_0_cfgMthds
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_cfgMthds $cfgMthds
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_setupLock 0
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_cfgState 0
+rc_conf_add_params wlan_wps wlwps${wps_index}_0_maxPinLockout 0
+
+#************start wlan_wps_regs section config*********************
+let wlan_wps_regs_Count=$wlan_wps_regs_Count+1
+#wlan_main is the parent
+let wpsregsPcpeIdVal=$wlan_main_nextCpeId
+let wps_regs_index=$wlan_main_nextCpeId
+rc_conf_add_params wlan_wps_regs wlwpsregs${wps_regs_index}_0_cpeId  $wlan_wps_regs_nextCpeId
+rc_conf_add_params wlan_wps_regs wlwpsregs${wps_regs_index}_0_pcpeId $wpsregsPcpeIdVal
+rc_conf_add_params wlan_wps_regs wlwpsregs${wps_regs_index}_0_enable 0
+rc_conf_add_params wlan_wps_regs wlwpsregs${wps_regs_index}_0_regDevName "LTQ_WPS_Registrar"
+
+#************start wlan_wds section config*********************
+let wdsPcpeIdVal=$wlan_main_nextCpeId #wlan_main is the parent
+rc_conf_add_params wlan_wds wlwds_${wlan_wds_Count}_cpeId  $wlan_wds_nextCpeId
+rc_conf_add_params wlan_wds wlwds_${wlan_wds_Count}_pcpeId $wdsPcpeIdVal
+rc_conf_add_params wlan_wds wlwds_${wlan_wds_Count}_enable 0
+rc_conf_add_params wlan_wds wlwds_${wlan_wds_Count}_encrType 0
+rc_conf_add_params wlan_wds wlwds_${wlan_wds_Count}_peerAPKeyIdx 0
+rc_conf_add_params wlan_wds wlwds_${wlan_wds_Count}_numPeerAPs 0
+let wlan_wds_Count=$wlan_wds_Count+1
+
+#************start wlan_security section config*********************
+let secPcpeIdVal=$if_instance+1
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_cpeId  $wlan_security_nextCpeId
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_pcpeId $secPcpeIdVal
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_beaconType 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_authType 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_encrType 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_basicAuthType 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_basicEncrType 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_wpaAuthType 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_wpaEncrType 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_wpa2AuthType 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_wpa2EncrType 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_wepEncrLvl 1
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_wepKeyType 1
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_wepKeyIndx 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_macAddrCntrlType 2
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_pmfEna 0
+rc_conf_add_params wlan_security wlsec_${wlan_security_Count}_pmfRequired 0 
+let wlan_security_Count=$wlan_security_Count+1
+
+#************start wlan_vendor_wave section config*********************
+let secPcpeIdVal=$if_instance+1
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_cpeId  $wlan_vendor_wave_nextCpeId
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_pcpeId $secPcpeIdVal
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_fwFastRecoverEna 1
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_fwFastRecoverLim 3
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_fwFullRecoverEna 1
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_fwFullRecoverLim 1
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_fwCompleteRecoverEna 0
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_fwRecoverTimer 86400
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_fwAutoRecoverDumpEna 5
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_mcPSsize 5
+rc_conf_add_params wlan_vendor_wave wlwave_${wlan_vendor_wave_Count}_mctoUcEna 1
+let wlan_vendor_wave_Count=$wlan_vendor_wave_Count+1
+
+#******* update section byte count ********************
+#
+# Up to now all parameters added without update section byte lenght.
+# Need to update original rc.conf with new length.
+
+print2log DBG "host_api: Start update section byte count"
+
+update_length wlan_main
+update_length wlan_1x
+update_length wlan_psk
+update_length wlan_wep
+update_length wlan_ap_wmm
+update_length wlan_sta_wmm
+update_length wlan_wps
+update_length wlan_wps_regs
+update_length wlan_wds
+update_length wlan_security
+update_length wlan_vendor_wave
+
+print2log DBG "host_api: End update section byte count"
+
+#******* update param count ********************
+#                                              #
+
+print2log DBG "host_api: Start update param count"
+
+rc_conf_safe_set wlan_main wlan_main_Count $wlan_main_Count
+
+rc_conf_safe_set wlan_1x wlan_1x_Count $wlan_1x_Count
+let wlan_1x_nextCpeId=$wlan_1x_nextCpeId+1
+
+rc_conf_safe_set wlan_psk wlan_psk_Count $wlan_psk_Count
+let wlan_psk_nextCpeId=$wlan_psk_nextCpeId+1
+
+rc_conf_safe_set wlan_wep wlan_wep_Count $wlan_wep_Count
+
+rc_conf_safe_set wlan_ap_wmm wlan_ap_wmm_Count $wlan_ap_wmm_Count
+
+rc_conf_safe_set wlan_sta_wmm wlan_sta_wmm_Count $wlan_sta_wmm_Count
+
+rc_conf_safe_set wlan_wps wlan_wps_Count $wlan_wps_Count
+let wlan_wps_nextCpeId=$wlan_wps_nextCpeId+1
+
+rc_conf_safe_set wlan_wps_regs wlan_wps_regs_Count $wlan_wps_regs_Count
+let wlan_wps_regs_nextCpeId=$wlan_wps_regs_nextCpeId+1
+
+rc_conf_safe_set wlan_wds wlan_wds_Count $wlan_wds_Count
+let wlan_wds_nextCpeId=$wlan_wds_nextCpeId+1
+
+rc_conf_safe_set wlan_security wlan_security_Count $wlan_security_Count
+let wlan_security_nextCpeId=$wlan_security_nextCpeId+1
+
+rc_conf_safe_set wlan_vendor_wave wlan_vendor_wave_Count $wlan_vendor_wave_Count
+let wlan_vendor_wave_nextCpeId=$wlan_vendor_wave_nextCpeId+1
+
+print2log DBG "host_api: End update param count"
+
+#******* update next_cpeid section ********************
+#                                                     #
+print2log DBG "host_api: Start update next_cpeid section"
+
+let wlan_main_nextCpeId=$wlan_main_nextCpeId+1
+
+rc_conf_safe_set next_cpeid  wlan_main_nextCpeId  $wlan_main_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_1x_nextCpeId  $wlan_1x_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_psk_nextCpeId  $wlan_psk_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_wep_nextCpeId  $wlan_wep_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_ap_wmm_nextCpeId  $wlan_ap_wmm_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_sta_wmm_nextCpeId  $wlan_sta_wmm_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_wps_nextCpeId  $wlan_wps_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_wps_regs_nextCpeId  $wlan_wps_regs_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_wds_nextCpeId  $wlan_wds_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_security_nextCpeId  $wlan_security_nextCpeId
+rc_conf_safe_set next_cpeid  wlan_vendor_wave_nextCpeId  $wlan_vendor_wave_nextCpeId
+
+print2log DBG "host_api: End update next_cpeid section"
+
+let ap_index=$wlan_main_Count-1
+# add wave_wlan_start script to file for use by apply command
+script_in_file=`grep -l "$ETC_PATH/wave_wlan_start $ap_index" /tmp/host_api_cli_exec_list 2> /dev/null`
+if [ -z $script_in_file ]
+then
+        echo "$ETC_PATH/wave_wlan_start $ap_index" >> /tmp/host_api_cli_exec_list
+fi
+
+#return the ap index to caller
+echo $apName
+
+#add_vap_safe_sec_end
+
+# END Write to file
+# WARNING- don't delete comment above (add_vap_...).
+# It is string input to sed application
+} 
+
+run_add_vap_safe()
+{        
+        chmod a+x /tmp/add_vap_file_$1
+        
+        print2log DBG "host_api: run add_vap_file_$1"
+        
+        #################################################
+        #safely run the file (use double quote to for proper $$):
+
+        /usr/sbin/syscfg_lock $CONFIGS_PATH/rc.conf "
+            /usr/sbin/rcconf_chk $CONFIGS_PATH/rc.conf
+            error=\$?
+            if [ \$error -ne 0 ]
+            then
+                echo run_add_vap_safe: Error in rc.conf file sanity > /dev/console
+                exit 1
+            fi
+            /tmp/add_vap_file_$1 $1 $2
+        "
+        #################################################
+        rm -f /tmp/add_vap_file_$1
+}
+
+
+########################################################################################
+# remove_vap() and del_vap():
+#       search for the index inside the file, delete all params that starts with
+#       'xxx_$index' then use sed to replace the index numbers of other higher VAPs if exist
+#
+remove_vap()
+{
+    wlan_count_vap=$wlan_main_Count
+    target_if=$1
+    print2log DBG "host_api: target_if=$target_if"
+    physical=0
+    if [ -e $ETC_PATH/config.sh ]; then . $ETC_PATH/config.sh 2>/dev/null; fi
+    # In case of dual band verify wlan1 is not deleted
+    if [ "$CONFIG_FEATURE_IFX_CONCURRENT_DUAL_WIRELESS" = "1" ] && [ "$target_if" = "1" ]
+    then
+            physical=1
+    fi
+    # wlan0 and wlan1 can't be deleted
+    if [ "$physical" = "1" ] || [ "$target_if" = "0" ] || [ "$target_if" = "" ]
+    then
+        echo "ERROR: can not delete physical interface" > /dev/console
+        return 1
+    else
+        print2log DBG "remove_vap: remove vap" 
+        $ETC_PATH/wave_wlan_remove_vap $target_if
+        return 0
+    fi
+}
+
+
+########################################################################################
+# del_vap - dummay handler, encapsulate code that is copy to a file.
+#
+del_vap()
+{
+        # The next sed comamnd copy code between two tags to a file, then it calls handler to run the file
+        #add shared code
+        sed -n '/#shared_code_safe_sec'"$param1"'/,/#shared_code_safe_sec'"$param2"'/p' /bin/host_api  > /tmp/del_vap_file_$$
+        #add del_vap code
+        sed -n '/#del_vap_safe_sec'"$param1"'/,/#del_vap_safe_sec'"$param2"'/p' /bin/host_api  >> /tmp/del_vap_file_$$
+        #delete remarks - one remarks left is at the end of shared code
+        sed -i -e "1d" /tmp/del_vap_file_$$ 
+        sed -i '$ d' /tmp/del_vap_file_$$
+        #remove vap
+        remove_vap $conf_type
+        ret_val=$?
+        if [ $ret_val = 0 ]
+        then
+            #delete vap related params from rc.conf
+            run_del_vap_safe $$ $conf_type
+        else
+            echo "ERROR: del_vap failed" > /dev/console
+        fi
+}
+
+
+########################################################################################
+# del_vap - dummay handler, encapsulate code that is copy to a file.
+#
+del_vap_to_file()
+{
+# START write to file:
+# WARNING- don't delete comment below (del_vap_... and !/bin/sh).
+# It is string input to sed application
+
+#del_vap_safe_sec_start
+                
+
+##################################
+#TODO- validation using ...
+
+wlan_count_vap=$wlan_main_Count
+target_if=$2
+print2log DBG "host_api: target_if=$target_if"
+physical=0
+if [ -e $ETC_PATH/config.sh ]; then . $ETC_PATH/config.sh 2>/dev/null; fi
+# In case of dual band verify wlan1 is not deleted
+if [ "$CONFIG_FEATURE_IFX_CONCURRENT_DUAL_WIRELESS" = "1" ] && [ "$target_if" = "1" ]
+then
+        physical=1
+fi
+# wlan0 and wlan1 can't be deleted
+if [ "$physical" = "1" ] || [ "$target_if" = "0" ]
+then
+    echo "ERROR: can not delete physical interface" /dev/console
+else
+        let current_if=target_if+1
+        let current_if_less=$target_if
+        eval special='$'wlmn_${target_if}_cpeId
+
+        #delete VAP from all sections
+        sed -e '/^wlmn_'$target_if'_/d' \
+            -e '/^wl1x_'$target_if'_/d' \
+            -e '/^wlpsk'$special'_/d' \
+            -e '/^wlwep'$special'_/d' \
+            -e '/^wlawmm'$special'_/d' \
+            -e '/^wlswmm'$special'_/d' \
+            -e '/^wlwps'$special'_/d' \
+            -e '/^wlwpsregs'$special'_/d' \
+            -e '/^wlwds_'$target_if'_/d' \
+            -e '/^wlsec_'$target_if'_/d' \
+            -e '/^wlwave_'$target_if'_/d' \
+            $CONFIGS_PATH/rc.conf > /tmp/rc_modify.conf
+        cp /tmp/rc_modify.conf $CONFIGS_PATH/rc.conf
+        
+        # Update byte count
+        update_length wlan_main
+        update_length wlan_1x
+        update_length wlan_psk
+        update_length wlan_wep
+        update_length wlan_ap_wmm
+        update_length wlan_sta_wmm
+        update_length wlan_wps
+        update_length wlan_wps_regs
+        update_length wlan_wds
+        update_length wlan_security
+        update_length wlan_vendor_wave
+
+        #Change VAPs index to the parent objects only:
+        let wlan_count_vap=$wlan_count_vap+1
+        while [ "$current_if" -lt "$wlan_count_vap" ]
+        do
+        	sed -e 's/^wlmn_'$current_if'_/wlmn_'$current_if_less'_/' \
+            	    -e 's/^wl1x_'$current_if'_/wl1x_'$current_if_less'_/' \
+            	    -e 's/^wlsec_'$current_if'_/wlsec_'$current_if_less'_/' \
+            	    -e 's/^wlwds_'$current_if'_/wlwds_'$current_if_less'_/' \
+            	    -e 's/^wlwave_'$current_if'_/wlwave_'$current_if_less'_/' \
+                    $CONFIGS_PATH/rc.conf > /tmp/rc_modify.conf
+                let current_if_less=$current_if
+                let current_if=$current_if+1
+                cp /tmp/rc_modify.conf $CONFIGS_PATH/rc.conf
+        done
+        
+        let wlan_main_Count=$wlan_main_Count-1
+        rc_conf_safe_set wlan_main wlan_main_Count $wlan_main_Count
+        let wlan_1x_Count=$wlan_1x_Count-1
+        rc_conf_safe_set wlan_1x wlan_1x_Count $wlan_1x_Count
+        let wlan_psk_Count=$wlan_psk_Count-1
+        rc_conf_safe_set wlan_psk wlan_psk_Count $wlan_psk_Count
+        let wlan_wep_Count=$wlan_wep_Count-4
+        rc_conf_safe_set wlan_wep wlan_wep_Count $wlan_wep_Count
+        let wlan_ap_wmm_Count=$wlan_ap_wmm_Count-4
+        rc_conf_safe_set wlan_ap_wmm wlan_ap_wmm_Count $wlan_ap_wmm_Count
+        let wlan_sta_wmm_Count=$wlan_sta_wmm_Count-4
+        rc_conf_safe_set wlan_sta_wmm wlan_sta_wmm_Count $wlan_sta_wmm_Count
+        let wlan_wps_Count=$wlan_wps_Count-1
+        rc_conf_safe_set wlan_wps wlan_wps_Count $wlan_wps_Count
+        let wlan_wps_regs_Count=$wlan_wps_regs_Count-1
+        rc_conf_safe_set wlan_wps_regs wlan_wps_regs_Count $wlan_wps_regs_Count
+        let wlan_wds_Count=$wlan_wds_Count-1
+        rc_conf_safe_set wlan_wds wlan_wds_Count $wlan_wds_Count
+        let wlan_security_Count=$wlan_security_Count-1
+        rc_conf_safe_set wlan_security wlan_security_Count $wlan_security_Count
+        let wlan_vendor_wave_Count=$wlan_vendor_wave_Count-1
+        rc_conf_safe_set wlan_vendor_wave wlan_vendor_wave_Count $wlan_vendor_wave_Count
+
+        # delete temp files t avoid mem leack
+        rm -f /tmp/rc_modify.conf
+fi
+        #del_vap_safe_sec_end
+
+# END write to file
+# WARNING- don't delete comment below (del_vap_...).
+# It is string input to sed application
+}
+
+
+run_del_vap_safe()
+{        
+        chmod a+x /tmp/del_vap_file_$1
+        
+        print2log DBG "host_api: run del_vap_file_$1"
+        
+        #################################################
+        #safely run the file (use double quote to for proper $$):
+
+        /usr/sbin/syscfg_lock $CONFIGS_PATH/rc.conf "
+            /usr/sbin/rcconf_chk $CONFIGS_PATH/rc.conf
+            error=\$?
+            if [ \$error -ne 0 ]
+            then
+                echo run_del_vap_safe: Error in rc.conf file sanity > /dev/console
+                exit 1
+            fi
+             # params: pid interface
+            /tmp/del_vap_file_$1 $1 $2
+        "
+        #################################################
+        rm -f /tmp/del_vap_file_$1
+}
+
+# apply command
+apply()
+{
+        # apply command execute scripts, so delete conf file now
+        rm -f /tmp/rc.conf_$$
+        # remove status file
+        rm -f $wave_init_failure
+        rm -f $wave_start_failure
+        rm -f $wave_init_success
+        write_to_flash
+
+        . /$CLI_EXEC_LIST
+        mv $CLI_EXEC_LIST $CLI_EXEC_LIST_PREV 2> /dev/null
+
+        check_init_success apply
+}
+
+# restart command
+restart()
+{
+        $ETC_PATH/wave_wlan_restart
+        check_init_success restart
+}
+
+# get_wlan command
+get_wlan()
+{
+	wlan=`find_wave_if_from_index $conf_type`
+	echo $wlan
+}
+
+get_ap_index()
+{
+	apName=$conf_type
+	# Get corresponding ap index for current ap name
+
+	ap_index=`cat /tmp/rc.conf_$$ | grep _apName=\"$apName\" |  awk -F "_" '{print $2}'`
+
+	echo $ap_index
+}
+
+
+# This function delete cli handlers file (CLI_EXEC_LIST).
+# After Init CLI_EXEC_LIST file is not empty Clean it to start from frash.
+# (EEPROMCountryValid and Country params configured with no commit, commit delete this file)
+clean()
+{
+        rm -f $CLI_EXEC_LIST
+}
+
+
+get_number_vaps()
+{
+        vaps=0
+        interface=$conf_type
+
+        if [ "$interface" = "0" ] || [ "$interface" = "wlan0" ]
+        then
+                vaps=`cat /tmp/rc.conf_$$ | grep -c "_apName=\"MyAP_0."`
+        elif [ "$interface" = "1" ] || [ "$interface" = "wlan1" ]
+        then
+                vaps=`cat /tmp/rc.conf_$$ | grep -c "_apName=\"MyAP_1."`
+        fi
+
+        echo $vaps
+}
+
+
+#set_ip - change the IP and related parameters
+set_ip()
+{
+    if [ -z "$1" ]
+    then
+        usage 
+    fi
+    ip_addr=$1
+    #Save old IP
+    ip_addr_old=$lan_dhcps_gw
+    #get IP mask field and compare to mask. If same need to change only the IP+DHCP+GW
+    mask_new=`echo $ip_addr | awk -F "."  '{print $1"."$2"."$3}'`
+    
+    #Both VB/Non_VB
+    rc_conf_set lan_dhcps lan_dhcps_gw  "$ip_addr"
+
+    addr_ending=`echo $ip_addr | awk -F "."  '{print $4}'`
+    let addr_ending=$addr_ending+1
+    dhcps_startIp="${mask_new}.${addr_ending}" 
+    rc_conf_set lan_dhcps lan_dhcps_startIp  "$dhcps_startIp"
+
+    dhcps_endIp="${mask_new}"".254" 
+    rc_conf_set lan_dhcps lan_dhcps_endIp  "$dhcps_endIp"
+
+    if [ "$ip_addr_old" = "$wl1x_0_radiusIP" ]
+    then
+        rc_conf_set wlan_1x wl1x_0_radiusIP "$ip_addr"
+    fi
+    
+    if [ "$CONFIG_FEATURE_LTQ_WIRELESS_VB" = "1" ]
+    then
+        #work on "gen_bd_cfg" section
+        rc_conf_set gen_bd_cfg gbc_mgmtIP  "$ip_addr"
+
+        rc_conf_set gen_bd_cfg gbc_dhcpClntEna "0"
+    else
+        #work on "lan_main" section
+        rc_conf_set lan_main lan_main_0_ipAddr  "$ip_addr"
+        if [ "$ip_addr_old" = "$lan_main_0_DNSServers" ]
+        then
+            rc_conf_set lan_main lan_main_0_DNSServers "$ip_addr"
+        fi
+    fi
+#No need, user issue apply, if from factorycfg - apply is executed
+#    #save changes
+#    commit
+
+    #make sure to reboot in 'apply' command
+    echo "reboot" > /tmp/ip_change_reboot
+    chmod a+x /tmp/ip_change_reboot
+    echo "/tmp/ip_change_reboot" >> $CLI_EXEC_LIST
+}
+
+# TODO- prepare DB for ARX362 and change configuration acordinglly !!!
+# set_wan_mode - reboot is needed at the end of operation
+set_wan_mode()
+{
+    if [ -z "$1" ]
+    then
+        usage 
+    fi
+    wan_mode=$1
+
+    case $wan_mode in
+    ETH)
+        #Specific board settings:
+        board=$CONFIG_IFX_MODEL_NAME
+        board=`echo $board | awk -F "_"  '{print $1}'`
+
+        # if there is database ready use it
+        if [ -e $ETC_PATH/host_api_factorycfg_db ]
+        then
+            . $ETC_PATH/host_api_factorycfg_db
+            eval parameters=\${${board}_NUMBER_ETHWAN_PARAMS}
+            for i in $parameters; do
+                eval command=\${${board}_ETHWAN_PARAM_${i}}
+                rc_conf_set $command
+            done
+        else
+            echo "WARNING: host_api_factorycfg_db file not found" > /dev/console
+        fi
+    ;;
+    DSL)
+        echo "WARNING: DSL is not supported as WAN mode" > /dev/console
+    ;;
+    *)
+        echo "WARNING: $wan_mode is not supported as WAN mode" > /dev/console
+    ;;
+    esac
+    #make sure to reboot in 'apply' command. Test if not already in CLI exec file
+    script_in_file=`grep -l "/tmp/ip_change_reboot" $CLI_EXEC_LIST 2> /dev/null`
+    if [ -z $script_in_file ]
+    then
+        echo "reboot" > /tmp/ip_change_reboot
+        chmod a+x /tmp/ip_change_reboot
+        echo "/tmp/ip_change_reboot" >> $CLI_EXEC_LIST
+    fi
+}
+
+
+#set_wan_autodetect - requires apply command in order to execute reboot
+#                   reboot is needed at the end of operation (non wlan scripts)
+set_wan_autodetect()
+{
+    if [ -z "$1" ]
+    then
+        usage 
+    fi
+    autodetect=$1
+
+    if [ "$autodetect" = "0" ]
+    then
+        rc_conf_set vlan_ch_cfg vlanch_2_autodetect "0"
+        rc_conf_set auto_detect_cfg auto_detect_L3 "0"
+        rc_conf_set auto_detect_cfg auto_detect_adsl_ptm_L3 "0"
+        rc_conf_set auto_detect_cfg auto_detect_vdsl_ptm_L3 "0"
+        rc_conf_set auto_detect_cfg auto_detect_mii1_L3 "0"
+        rc_conf_set auto_detect_cfg auto_detect_mii0_L3 "0"
+        rc_conf_set auto_detect_cfg auto_detect_L2 "0"
+        rc_conf_set auto_detect_cfg auto_detect_Vlan_ADSL_PTM "0"
+        rc_conf_set auto_detect_cfg auto_detect_Vlan_VDSL_PTM "0"
+        rc_conf_set auto_detect_cfg auto_detect_Vlan_ETH1 "0"
+        rc_conf_set auto_detect_cfg auto_detect_Vlan_ETH0 "0"
+        rc_conf_set auto_detect_cfg auto_atm_vlan_pool ""
+        #adsl_vcchannel section is only for ARX362:
+        board=$CONFIG_IFX_MODEL_NAME
+        board=`echo $board | awk -F "_"  '{print $1}'`
+        if [ "$board" = "ARX362" ]
+        then
+            rc_conf_set adsl_vcchannel VCChannel_0_autodetect "0"
+        fi
+    else
+        echo "WARNING- set_wan_autodetect: enabled is not supported yet" > /dev/console
+        exit_safe
+    fi
+
+    #make sure to reboot in 'apply' command. Test if not already in CLI exec file
+    script_in_file=`grep -l "/tmp/ip_change_reboot" $CLI_EXEC_LIST 2> /dev/null`
+    if [ -z $script_in_file ]
+    then
+        echo "reboot" > /tmp/ip_change_reboot
+        chmod a+x /tmp/ip_change_reboot
+        echo "/tmp/ip_change_reboot" >> $CLI_EXEC_LIST
+    fi
+}
+
+
+set_dhcp()
+{
+    if [ -z "$1" ]
+    then
+        usage 
+    fi
+    dhcp_val=$1
+    if [ "$dhcp_val" = "server" ] || [ "$dhcp_val" = "disable" ]
+    then
+        rc_conf_set lan_main lan_main_0_dhcpMode $dhcp_val
+    else
+        echo "WARNING- set_dhcp: illegal value ($dhcp_val)" > /dev/console
+    fi
+    #make sure to reboot in 'apply' command. Test if not already in CLI exec file
+    script_in_file=`grep -l "/tmp/ip_change_reboot" $CLI_EXEC_LIST 2> /dev/null`
+    if [ -z $script_in_file ]
+    then
+        echo "reboot" > /tmp/ip_change_reboot
+        chmod a+x /tmp/ip_change_reboot
+        echo "/tmp/ip_change_reboot" >> $CLI_EXEC_LIST
+    fi
+}
+
+
+factorycfg()
+{
+    ip_addr=$1
+
+    #When IP is added to call need also to use it as the new IP
+    if [ ! -z "$ip_addr" ]
+    then
+        #Chaneg IP
+        set_ip $ip_addr
+    fi
+
+    # Disable wan autodetect
+    set_wan_autodetect 0
+
+    # set wan mode to ETH WAN MII1
+    set_wan_mode ETH
+
+    #reboot
+    #echo "reboot" > /tmp/ip_change_reboot
+    #chmod a+x /tmp/ip_change_reboot
+    #echo "/tmp/ip_change_reboot" >> $CLI_EXEC_LIST
+    apply
+}
+
+
+check_init_success()
+{
+    #handle status file
+    if [ -e $wave_init_failure ]
+    then
+        cat $wave_init_failure
+    elif [ -e $wave_start_failure ] && [ `cat $wave_start_failure | grep -v "non-existing physical wlan1" | grep -v "wlan1 failed:" -c` -gt 0 ]
+    then
+        cat $wave_start_failure
+    else
+        echo "host_api $1 finished with success" > $wave_init_success
+        cat $wave_init_success
+    fi
+}
+
+
+trigger_fw_recovery()
+{
+        $ETC_PATH/rc.d/wave_wlan_trigger_recovery_test $*
+}
+
+
+scan()
+{
+    interface=$1
+    disconnect=$2
+
+    #remove old file:
+    rm -f /tmp/host_api_cli_scan_results
+
+    /etc/rc.d/wave_wlan_scan $disconnect
+
+    #source the scan results file
+    . /tmp/scan_res1
+    i=0
+    print2log DBG "host_api (scan): scan finished, i=$i"
+
+    # loop over scan_res1 file and config parameters to return on CLI scan request
+    while [ $i -lt $AP_count ]
+    do
+        # For every entry:
+        #   convert the parameter name + index to a shell parameter and evaluate its value
+        print2log DBG "host_api (scan): i=$i"
+
+        # beaconType
+        if [ $(eval echo \${beaconType_$i}) -eq 0 ]; then beaconType_out=Basic
+        elif [ $(eval echo \${beaconType_$i}) -eq 1 ]; then beaconType_out=WPA
+        elif [ $(eval echo \${beaconType_$i}) -eq 2 ]; then beaconType_out=WPA2
+        elif [ $(eval echo \${beaconType_$i}) -eq 3 ]; then beaconType_out="WPA/WPA2"
+        fi
+
+        #auth
+        if [ $(eval echo \${auth_$i}) -eq 0 ]; then auth_out=Open
+        elif [ $(eval echo \${auth_$i}) -eq 2 ]; then auth_out=Radius
+        elif [ $(eval echo \${auth_$i}) -eq 3 ]; then auth_out=PSK
+        fi
+
+        #encr
+        if [ $(eval echo \${encr_$i}) -eq 0 ]; then enc_out=None
+        elif [ $(eval echo \${encr_$i}) -eq 1 ]; then enc_out=WEP
+        elif [ $(eval echo \${encr_$i}) -eq 2 ]; then enc_out=TKIP
+        elif [ $(eval echo \${encr_$i}) -eq 3 ]; then enc_out=CCMP
+        elif [ $(eval echo \${encr_$i}) -eq 4 ]; then enc_out="TKIP CCMP"
+        fi
+
+        if [ $(eval echo \${chanWidth_$i}) -eq 0 ]; then bandwidth_out="20MHz"
+        elif [ $(eval echo \${chanWidth_$i}) -eq 2 ]; then bandwidth_out="40MHz"
+        fi
+
+        if [ $(eval echo \${WPS_$i}) -eq 0 ]; then wps_out="No"
+        elif [ $(eval echo \${WPS_$i}) -eq 1 ]; then wps_out="Yes"
+        fi
+
+        eval SSID=\${SSID_$i}
+        eval band=\${band_$i}
+        eval Standard=\${std_$i}
+        eval RSSI=\${RSSI_$i}
+
+        #return results:
+        echo "$i: SSID='$SSID', band=$band, bandwidth=$bandwidth_out, beacon Type=$beaconType_out, Authentication Type=$auth_out, Encryption Type=$enc_out, Standard=$Standard, RSSI=$RSSI, WPS WPS=$wps_out" >> /tmp/host_api_cli_scan_results
+
+        let i=i+1
+    done
+}
+
+##############################################
+# connect - get index to AP from user and configure rc.conf (ap_index: see comment in scan command).
+#           Other option is to give no parameters, it use rc.conf configuration for the connection.
+#           In case of security, additional info added to command.
+#           section in rc.conf: wlan_profile
+#           parameters:
+#               wlprof_ssid
+#               wlprof_bssid
+#               wlprof_beaconType
+#               wlprof_authType
+#               wlprof_encrType
+#               wlprof_actWepKey
+#               wlprof_wepKeyType
+#               wlprof_wepEncrLvl
+#               wlprof_wepKey0
+#               wlprof_wepKey1
+#               wlprof_wepKey2
+#               wlprof_wepKey3
+#               wlprof_passPhrase
+#               wlprof_userName
+#               wlprof_freqBand
+#               wlprof_nChanWidth
+#               wlprof_standard
+#
+#wepKeyType: 0-ascci, 1-hex. Take from user
+#wepEncrLvl: 0->64; 1->128. Take from user
+#wlprof_freqBand: 0=2.4 GHz;1=5 GHz
+#wlprof_nChanWidth: 0=20MHz; 2=40MHz
+#
+connect()
+{
+    # For interface use 'if_instance' and not '$3' that can be wlanX and not index
+    interface=$if_instance
+    ap_index=$4
+    print2log DBG "host_api (connect): ap_index=$ap_index"
+
+    # If no ap index given, rc.conf configured already - use wlan_connect to connect
+    # else use the scan list to configure rc.conf and then use wlan_connect to connect
+    if [ -n $ap_index ]
+    then
+        #source the scan results file
+        . /tmp/scan_res1
+        
+        eval bssid=\${BSSID_${ap_index}}
+        eval ssid=\${SSID_${ap_index}}
+        eval beaconType=\${beaconType_${ap_index}}
+        eval authType=\${auth_${ap_index}}
+        eval encrType=\${encr_${ap_index}}
+        eval band=\${band_${ap_index}}
+        eval chanWidth=\${chanWidth_${ap_index}}
+        eval standard=\${std_${ap_index}}
+        
+        #write to rc.conf
+        rc_conf_set wlan_profile wlprof_ssid $ssid
+        rc_conf_set wlan_profile wlprof_bssid $bssid
+        rc_conf_set wlan_profile wlprof_beaconType $beaconType
+        rc_conf_set wlan_profile wlprof_authType $authType
+        rc_conf_set wlan_profile wlprof_encrType $encrType
+        
+        print2log DBG "host_api (connect): encrType=$encrType"
+        #checking for secured AP
+        if [ "$encrType" = "1" ]
+        then
+            #WEP
+            print2log DBG "host_api (connect): WEP"
+            wep_index=$5
+            rc_conf_set wlan_profile wlprof_actWepKey $wep_index
+            rc_conf_set wlan_profile wlprof_wepKey0 $6
+            rc_conf_set wlan_profile wlprof_wepKey1 $7
+            rc_conf_set wlan_profile wlprof_wepKey2 $8
+            rc_conf_set wlan_profile wlprof_wepKey3 $9
+            wepKeyType=$10
+            wepEncrLvl=$11
+            rc_conf_set wlan_profile wlprof_wepKeyType $wepKeyType
+            rc_conf_set wlan_profile wlprof_wepEncrLvl $wepEncrLvl
+        elif [ "$encrType" != "0" ]
+        then
+            #WPA family
+            wpa_index=$5
+            rc_conf_set wlan_profile wlprof_passPhrase $wpa_index
+        fi
+        band_tmp=1
+        if [ "$band" = "2.4" ]; then band_tmp=0; fi
+        rc_conf_set wlan_profile wlprof_freqBand $band_tmp
+        rc_conf_set wlan_profile wlprof_nChanWidth $chanWidth
+        rc_conf_set wlan_profile wlprof_standard $standard
+        
+        #save to flash
+		#TODO- commit delete host_api_cli_exec_list file (use 'write_to_flash' instead ?)
+        commit
+    fi
+    #connect via supplicant
+    $ETC_PATH/wlan_connect
+}
+
+
+connection_status()
+{
+    /etc/rc.d/wlan_get_link_status $if_instance
+}
+
+
+disconnect()
+{
+    /tmp/wpa_cli disconnect
+}
+
+
+reconnect()
+{
+    /tmp/wpa_cli reconnect
+}
+
+
+validate_file_exist()
+{
+	file=$1
+	delay_in_sec=$2
+	i=0
+
+	while [ $i -lt $delay_in_sec ]
+	do
+		# Sleep 1 sec (before in order to give application time to update file)
+		sleep 1
+		if [ "$if_type" = "STA" ]
+		then
+			#if [ -e $file ]; then echo 1; return 0; fi
+			if [ -e $file ]
+			then
+				print2log DBG "host_api (validate_file_exist): file found, exit"
+				echo 1
+				return 0
+			fi
+			print2log DBG "host_api (validate_file_exist): STA, i=$i"
+		else
+			#if exist return lines count, else sleep 1 sec
+			if [ -e $file ]
+			then
+				echo `cat $file | wc -l`
+				return 0
+			fi
+		fi
+
+		let i=$i+1
+	done
+	print2log DBG "host_api (validate_file_exist): error, i=$i"
+	echo 0
+	return 1
+}
+
+
+######################################
+# wps_status_parser()
+# For the next possible events, WPS is still in process:
+#   WPS-SESSION-START, CTRL-EVENT-EAP-STARTED,
+#   WPS-REG-SUCCESS 
+# For these events, WPS finished with error:
+#   WPS-TIMEOUT
+#   WPS-OVERLAP-DETECTED
+# For this event, WPS finished successfully but more message must follow:
+#   WPS-SUCCESS
+# This event appear in both WPS success and failure. More messages may follow.
+# need to catch the events and analyse before return value:
+#   CTRL-EVENT-EAP-FAILURE
+#   example of params: 00:e0:92:00:01:43 (mac address), authentication failed, more?
+# For these events, WPS finished successfully:
+#   AP-STA-CONNECTED
+#   CONNECTED
+wps_status_parser()
+{
+    apIndex=$1
+    all_params=$*
+    tmp_event_line=`echo $all_params | awk '{$1=""; print}'`
+    event_line=`echo $tmp_event_line | awk '{sub(/^[ \t]/,""); print;}'`
+    #get event:
+    event_name=`echo $event_line | awk '{print $1}'`
+    print2log DBG "host_api (wps_status_parser): apIndex=$apIndex, event_name=$event_name"
+
+    case $event_name in
+        "WPS-SUCCESS")
+            #WPS successfully finished- not finished
+            echo "WPS_IN_PROCESS"
+        ;;
+        "WPS-TIMEOUT" | "WPS-OVERLAP-DETECTED" | "WPS-FAIL")
+            #Error
+            echo $event_name
+        ;;
+# TODO- this is not error, continue
+#        "AP-STA-DISCONNECTED")
+#            #Error
+#            echo $event_name
+#        ;;
+        "AP-STA-CONNECTED" | "CONNECTED")
+            echo "WPS-SUCCESS"
+        ;;
+        "CTRL-EVENT-EAP-FAILURE")
+            #Look for error/success
+            security=`host_api get $$ $apIndex NonProcSecurityMode`
+            print2log DBG "host_api (wps_status_parser): security=$security"
+            #if has mac test security for session end.
+            #if no mac - error, should follow by WPS-FAIL message after
+            mac=`echo $event_line | awk '{print $2}'`
+            is_mac=`echo $mac | awk '/[0-9a-fA-F][0-9a-fA-F]:/ {print $1}'`
+            print2log DBG "host_api (wps_status_parser): mac=$mac, is_mac=$is_mac, event_line=$event_line"
+            case $security in
+                $open)
+                if [ "$is_mac" ]
+                then
+                    echo "WPS-SUCCESS"
+                fi
+                    ;;
+                $WPA_Personal)
+                if [ "$is_mac" ]
+                then
+                    #wait for connected message
+                    echo "WPS_IN_PROCESS"
+                fi
+                    ;;
+                $WPA_Enterprise)
+                    #TODO !!??
+                    echo $event_name
+                    ;;
+                $wep)
+                   #Error- no WEP and WPS combination
+                      echo "UNEXPECTED_WPS_ERROR"
+                    ;;
+            esac
+        ;;
+        *)
+            #WPS in process
+            echo "WPS_IN_PROCESS"
+        ;;
+    esac
+}
+
+
+do_wps_command()
+{
+    STA=0
+    wps_method=$1
+    ap_index=$2
+    Enrollee_PIN=$3
+    Enrollee_mac=$4
+    wps_finish_timeout=130
+    #0-ok, 1-error
+    ret_val=0
+    delay=5
+    print2log DBG "host_api (do_wps_command): params=$*"
+
+    # Put all AP/STA related stuff here:
+    if [ "$if_type" = "STA" ]
+    then
+        event_file=/tmp/wps_2web_status
+        rm -f $event_file
+        if [ "$wps_method" = "wps_pin" ]
+        then
+            param=NonProc_WPS_DevicePIN
+            #param=WPS_PIN
+            Enrollee_PIN=`get_param $param`
+        fi
+    else
+        event_file=/tmp/wave_wlan_hostapd_events.log
+        # hostapd events are saved in /tmp/wave_wlan_hostapd_events.log
+        # This file used to grow big. We add flag to save events only for wps session (see wave_wlan_hostapd_events file).
+        # At the end rename file so always keep last wps session.
+        touch $CLI_WPS_IN_PROCESS
+    fi
+    #start WPS session
+    if [ "$wps_method" = "wps_pin" ]
+    then
+        print2log DBG "host_api (do_wps_command): start WPS pin mode"
+        $ETC_PATH/wave_wlan_wps_trigger_pin_pairing $ap_index $Enrollee_PIN $Enrollee_mac
+    else
+        print2log DBG "host_api (do_wps_command): start WPS pbc mode"
+        $ETC_PATH/wave_wlan_wps_trigger_pbc_pairing $ap_index
+    fi
+
+    #Start 130 sec delay to avoid deadlock
+    start_time=`date +%s`
+    was_in_progress=0
+    end_loop=0
+    wps_parse_results=""
+    print2log DBG "host_api (do_wps_command): start_time=$start_time"
+
+    #In AP need to validate file exist before continue (start_lines_event_file != 0),
+    #in STA start_lines_event_file will be empty
+    lines_in_event_file=`validate_file_exist $event_file $delay`
+    print2log DBG "host_api (do_wps_command): lines_in_event_file=$lines_in_event_file"
+
+    if [ "$lines_in_event_file" = "0" ]
+    then
+        # True for both AP/STA
+        echo "UNEXPECTED_WPS_ERROR: event file is not ready" > /dev/console
+        wps_parse_results="UNEXPECTED_WPS_ERROR"
+        end_loop=1
+        ret_val=1
+    fi
+
+    while [ "$end_loop" = "0" ]
+    do
+        time_current=`date +%s`
+        time_elaps=`expr $time_current - $start_time`
+        print2log DBG "host_api (do_wps_command): time_elaps=$time_elaps"
+        # if still in loop after timeout -> error:
+        if [ $time_elaps -gt $wps_finish_timeout ]
+        then
+            #error, exceeding WPS operation time
+            echo "do_wps_command: UNEXPECTED_WPS_ERROR: exceeding WPS operation time (time_elaps=$time_elaps)" > /dev/console
+            wps_parse_results="UNEXPECTED_WPS_ERROR"
+            ret_val=1
+            break
+        fi
+
+        #get last WPS results.
+        if [ "$if_type" = "STA" ]
+        then
+            #***********
+            #STA:
+            # Possible events: IDLE, IN_PROCESS, OVERLAP_ERR, TIMEOUT_ERR, SUCCESS
+            . $event_file
+            wps_parse_results=$STATE
+            print2log DBG "host_api (do_wps_command): wps_parse_results=$wps_parse_results"
+            if [ $wps_parse_results != "IN_PROCESS" ] && [ $wps_parse_results != "IDLE" ]
+            then
+                #WPS finished
+                print2log DBG "host_api (do_wps_command): WPS finished, wps_parse_results=$wps_parse_results"
+                end_loop=1
+                if [ "$wps_parse_results" != "SUCCESS" ]; then ret_val=1; fi
+            fi
+        else
+            #***********
+            #AP:
+            # get last hostapd event line: 
+            line=`tail -1 $event_file`
+            print2log DBG "host_api (do_wps_command): read line=$line"
+
+            #example of line format:
+            #  [2013-01-03T00:05:55+0000] wlan0 CTRL-EVENT-EAP-STARTED 00:e0:92:00:01:43
+            #need to delete time and interface from the line:
+            status=`echo $line | awk -F " " '{for(i=1;i<3;i++) $i="";print}'`
+            
+            #parse status, (from example: status=CTRL-EVENT-EAP-STARTED 00:e0:92:00:01:43):
+            wps_parse_results=`wps_status_parser $ap_index $status`
+            print2log DBG "host_api (do_wps_command): read wps_parse_results=$wps_parse_results"
+
+            if [ "$wps_parse_results" != "WPS_IN_PROCESS" ]
+            then
+                #WPS finished
+                print2log DBG "host_api (do_wps_command): WPS finished"
+                end_loop=1
+                if [ "$wps_parse_results" != "WPS-SUCCESS" ]
+                then
+                    print2log DBG "host_api (do_wps_command): WPS finished, not successfully"
+                    ret_val=1
+                fi
+            fi
+        fi
+        sleep 1
+    done
+
+    if [ "$if_type" = "PAP" ]
+    then
+        # Delete flag, hostapd events stop writing to log file.
+        # Rename hostapd events file name to ..._prev.log.
+        rm $CLI_WPS_IN_PROCESS
+        mv /tmp/wave_wlan_hostapd_events.log /tmp/wave_wlan_hostapd_events_prev.log
+    fi
+    #Handle caller status and errors
+    echo "host_api: $wps_method finshe with $wps_parse_results" > /dev/console
+    return $ret_val
+}
+
+
+case $command in
+	set)
+		set_param
+	;;
+	get)
+		get_param $param
+	;;
+	get_all)
+		get_all_params $param
+	;;
+	commit)
+		commit
+	;;
+	add_vap)
+		add_vap
+	;;
+	del_vap)
+		del_vap
+	;;
+	apply)
+		apply
+	;;
+	restart)
+		restart
+	;;
+	get_wlan)
+		get_wlan
+	;;
+	get_ap_index)
+		get_ap_index
+	;;
+	get_number_vaps)
+		get_number_vaps
+	;;
+	clean)
+		clean
+	;;
+	set_ip)
+		set_ip $3
+	;;
+	set_wan_autodetect)
+		set_wan_autodetect $3
+	;;
+	set_wan_mode)
+		set_wan_mode $3
+	;;
+	factorycfg)
+		factorycfg $3
+	;;
+	set_dhcp)
+		set_dhcp $3
+	;;
+	check_init_success)
+			check_init_success
+	;;
+	trigger_fw_recovery)
+			trigger_fw_recovery $3 $4 $5
+	;;
+	scan)
+	scan $if_instance $4
+	;;
+	connect)
+		connect $@
+	;;
+	connection_status)
+		connection_status
+	;;
+	disconnect)
+		disconnect
+	;;
+	reconnect)
+		reconnect
+	;;
+	wps_pbc)
+		do_wps_command wps_pbc $if_instance
+	;;
+	wps_pin)
+		do_wps_command wps_pin $if_instance $4 $5
+	;;
+	*)
+		echo "Unknown config command ($command)" > /dev/console
+		usage
+	;;
+esac	
+
+rm -f /tmp/rc.conf_$$
+

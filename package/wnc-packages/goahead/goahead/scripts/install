@@ -1,0 +1,35 @@
+#!/bin/sh
+#
+# voip watchdog Install - install script for voip watchdog component
+#
+# Modification History
+# --------------------
+# 01a,10Oct12,es written
+#
+#*/
+
+if [ -z "$3" ]; then
+    echo "Usage: install <OBJPATH> <SRCPATH> <HOST_INSTALL_PATH>"
+    exit -1;
+fi
+
+OBJPATH=$1
+SRCPATH=$2
+HOST_INSTALL_PATH=$3
+
+mkdir -p $HOST_INSTALL_PATH/bin
+mkdir -p $HOST_INSTALL_PATH/etc
+mkdir -p $HOST_INSTALL_PATH/lua
+mkdir -p $HOST_INSTALL_PATH/../www/cgi-bin
+
+#etc
+
+#bin
+cp $SRCPATH/src/webs $HOST_INSTALL_PATH/bin/
+cp -rf $SRCPATH/cgi-src/upload.cgi $HOST_INSTALL_PATH/../www/cgi-bin/
+cp -rf $SRCPATH/cgi-src/gui.cgi $HOST_INSTALL_PATH/../www/cgi-bin/
+cp -rf $SRCPATH/cgi-src/uploadMD.cgi $HOST_INSTALL_PATH/../www/cgi-bin/
+#lib
+
+#lua
+

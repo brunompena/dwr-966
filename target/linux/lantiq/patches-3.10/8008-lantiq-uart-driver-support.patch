@@ -1,0 +1,211 @@
+Console support update for Lantiq serial port
+Add cpu freq support
+
+diff --git a/drivers/tty/serial/Kconfig b/drivers/tty/serial/Kconfig
+--- a/drivers/tty/serial/Kconfig
++++ b/drivers/tty/serial/Kconfig
+@@ -1130,13 +1130,20 @@
+ 	  Support for Console on the NWP serial ports.
+ 
+ config SERIAL_LANTIQ
+-	bool "Lantiq serial driver"
++	tristate "Lantiq serial driver"
+ 	depends on LANTIQ
+ 	select SERIAL_CORE
+-	select SERIAL_CORE_CONSOLE
+ 	help
+ 	  Support for console and UART on Lantiq SoCs.
+ 
++config SERIAL_LANTIQ_CONSOLE
++        bool "Console on Lantiq SoCs serial port"
++        depends on SERIAL_LANTIQ=y
++        select SERIAL_CORE_CONSOLE
++	default y
++        help
++	  Support for console on Lantiq SoCs serial ports.
++
+ config SERIAL_QE
+ 	tristate "Freescale QUICC Engine serial port support"
+ 	depends on QUICC_ENGINE
+diff --git a/drivers/tty/serial/lantiq.c b/drivers/tty/serial/lantiq.c
+--- a/drivers/tty/serial/lantiq.c
++++ b/drivers/tty/serial/lantiq.c
+@@ -18,6 +18,7 @@
+  * Copyright (C) 2007 Felix Fietkau <nbd@openwrt.org>
+  * Copyright (C) 2007 John Crispin <blogic@openwrt.org>
+  * Copyright (C) 2010 Thomas Langer, <thomas.langer@lantiq.com>
++ * Copyright (C) 2013 Xiaogang Huang <xiaogang.huang@lantiq.com>
+  */
+ 
+ #include <linux/slab.h>
+@@ -39,8 +40,14 @@
+ #include <linux/gpio.h>
+ #include <linux/pinctrl/consumer.h>
+ #include <linux/err.h>
++#include <linux/delay.h>
++#include <lantiq_soc.h>
+ 
+-#include <lantiq_soc.h>
++#ifdef CONFIG_LTQ_CPU_FREQ
++#include <linux/cpufreq.h>
++#include <cpufreq/ltq_cpufreq.h>
++static enum ltq_cpufreq_state lqasc_pwm_state = LTQ_CPUFREQ_PS_D0;
++#endif
+ 
+ #define PORT_LTQ_ASC		111
+ #define MAXPORTS		2
+@@ -598,6 +605,8 @@
+ 	.verify_port =	lqasc_verify_port,
+ };
+ 
++#ifdef CONFIG_SERIAL_LANTIQ_CONSOLE
++
+ static void
+ lqasc_console_putchar(struct uart_port *port, int ch)
+ {
+@@ -687,6 +696,11 @@
+ }
+ console_initcall(lqasc_console_init);
+ 
++#define LANTIQ_SERIAL_CONSOLE &lqasc_console
++#else
++#define LANTIQ_SERIAL_CONSOLE NULL
++#endif /* CONFIG_SERIAL_LANTIQ_CONSOLE */
++
+ static struct uart_driver lqasc_reg = {
+ 	.owner =	THIS_MODULE,
+ 	.driver_name =	DRVNAME,
+@@ -694,9 +708,115 @@
+ 	.major =	0,
+ 	.minor =	0,
+ 	.nr =		MAXPORTS,
+-	.cons =		&lqasc_console,
++	.cons =		LANTIQ_SERIAL_CONSOLE,
+ };
+ 
++#ifdef CONFIG_LTQ_CPU_FREQ
++/* Linux CPUFREQ support start */
++int lqasc_cpufreq_prechange(enum ltq_cpufreq_module module,
++                                                        enum ltq_cpufreq_state newState,
++                                                        enum ltq_cpufreq_state oldState)
++{
++        struct ltq_uart_port *ltq_port;
++        struct uart_port *port;
++
++        ltq_port = lqasc_port[0];
++        port = &ltq_port->port;
++	console_stop(port->cons);
++        return 0;
++}
++
++int lqasc_cpufreq_postchange(enum ltq_cpufreq_module module,
++                                                        enum ltq_cpufreq_state newState,
++                                                        enum ltq_cpufreq_state oldState)
++{
++        struct ltq_uart_port *ltq_port;
++        struct uart_port *port;
++        struct ktermios *termios;
++        struct tty_struct *tty;
++
++        ltq_port = lqasc_port[0];
++        port = &ltq_port->port;
++        port->uartclk = clk_get_rate(ltq_port->fpiclk);
++
++        if (port->state == NULL)
++        goto exit;
++
++        tty = port->state->port.tty;
++        if (tty == NULL)
++                goto exit;
++
++        termios = &tty->termios;
++        if (termios == NULL) {
++                dev_warn(port->dev, "%s: no termios?\n", __func__);
++                goto exit;
++        }
++
++        lqasc_set_termios(port, termios, NULL);
++
++exit:
++        console_start(port->cons);
++	lqasc_pwm_state = newState;
++        return 0;
++}
++
++/* keep track of frequency transitions */
++static int
++lqasc_cpufreq_notifier(struct notifier_block *nb, unsigned long val,
++                                                  void *data)
++{
++        struct cpufreq_freqs *freq = data;
++        enum ltq_cpufreq_state new_State,old_State;
++        int ret;
++
++        new_State = ltq_cpufreq_get_ps_from_khz(freq->new);
++        if(new_State == LTQ_CPUFREQ_PS_UNDEF) {
++                return NOTIFY_STOP_MASK | (LTQ_CPUFREQ_MODULE_UART<<4);
++        }
++        old_State = ltq_cpufreq_get_ps_from_khz(freq->old);
++        if(old_State == LTQ_CPUFREQ_PS_UNDEF) {
++                return NOTIFY_STOP_MASK | (LTQ_CPUFREQ_MODULE_UART<<4);
++        }
++        if (val == CPUFREQ_PRECHANGE){
++                ret = lqasc_cpufreq_prechange(LTQ_CPUFREQ_MODULE_UART, new_State,
++                                                                          old_State);
++                if (ret < 0) {
++                        return NOTIFY_STOP_MASK | (LTQ_CPUFREQ_MODULE_UART<<4);
++                }
++        } else if (val == CPUFREQ_POSTCHANGE){
++                ret = lqasc_cpufreq_postchange(LTQ_CPUFREQ_MODULE_UART, new_State,
++                                                                           old_State);
++                if (ret < 0) {
++                        return NOTIFY_STOP_MASK | (LTQ_CPUFREQ_MODULE_UART<<4);
++                }
++        }else{
++                return NOTIFY_OK | (LTQ_CPUFREQ_MODULE_UART<<4);
++        }
++        return NOTIFY_OK | (LTQ_CPUFREQ_MODULE_UART<<4);
++}
++
++static int lqasc_cpufreq_state_get(enum ltq_cpufreq_state *pmcuState)
++{
++    if( pmcuState )
++	*pmcuState = lqasc_pwm_state;
++
++    return 0;
++}
++
++static struct notifier_block lqasc_cpufreq_notifier_block = {
++        .notifier_call  = lqasc_cpufreq_notifier
++};
++
++struct ltq_cpufreq_module_info lqasc_cpufreq_module = {
++	.name							= "UART frequency scaling support",
++	.pmcuModule						= LTQ_CPUFREQ_MODULE_UART,
++	.pmcuModuleNr					= 0,
++	.powerFeatureStat				= 1,
++	.ltq_cpufreq_state_get			= lqasc_cpufreq_state_get,
++	.ltq_cpufreq_pwr_feature_switch	= NULL,
++};
++#endif /* CONFIG_LTQ_CPU_FREQ */
++
+ static int __init
+ lqasc_probe(struct platform_device *pdev)
+ {
+@@ -765,6 +885,16 @@
+ 
+ 	ret = uart_add_one_port(&lqasc_reg, port);
+ 
++#ifdef CONFIG_LTQ_CPU_FREQ
++	{
++	struct ltq_cpufreq* lqasc_cpufreq_p;
++	cpufreq_register_notifier(&lqasc_cpufreq_notifier_block, 
++                                  CPUFREQ_TRANSITION_NOTIFIER);
++    	lqasc_cpufreq_p = ltq_cpufreq_get();
++	list_add_tail(&lqasc_cpufreq_module.list, &lqasc_cpufreq_p->list_head_module);
++	}							  
++#endif
++
+ 	return ret;
+ }
+ 

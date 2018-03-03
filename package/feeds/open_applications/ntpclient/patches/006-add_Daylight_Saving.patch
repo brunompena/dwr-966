@@ -1,0 +1,150 @@
+--- ntpclient-2007.old/ntpclient.c	2014-10-14 12:19:34.088338026 +0800
++++ ntpclient-2007/ntpclient.c	2014-06-11 16:13:27.456303800 +0800
+@@ -57,6 +57,7 @@
+ #endif
+ 
+ static int time_offset=0;
++static int daylightSaving=0;
+ 
+ #include "ntpclient.h"
+ 
+@@ -202,6 +203,114 @@
+         /* offset time */
+         tv_set.tv_sec  += time_offset*60;
+ 
++	if(daylightSaving)
++	{
++		// 20131204 GARYeh: add Daylight Saving
++		char cmd[64], buffer[64], curM[3], curW[3], startM[3], endM[3], startW[3], endW[3];
++		int fd = -1, start_flag=0, end_flag=0, dst_flag=0;		                 
++		time_t curtime;  
++
++		memset(cmd,'\0',sizeof(cmd));
++		memset(buffer,'\0',sizeof(buffer));
++		memset(curM,'\0',sizeof(curM));
++		memset(curW,'\0',sizeof(curW));
++		memset(startM,'\0',sizeof(startM));
++		memset(endM,'\0',sizeof(endM));
++		memset(startW,'\0',sizeof(startW));
++		memset(endW,'\0',sizeof(endW));		
++		
++	         curtime=tv_set.tv_sec;                                    
++		strftime(curM,10,"%m",localtime(&curtime)); 
++		strftime(curW,10,"%d",localtime(&curtime)); 
++		sprintf(curW,"%d",(atoi(curW)/7)+1);
++		if (debug) printf("current month: %s, week: %s\n", curM, curW);   
++		
++		sprintf(cmd,"cat /tmp/timezone");
++		fd = popen(cmd,"r");
++		fgets(buffer,sizeof(buffer),fd);
++		pclose(fd);
++
++		for(int i=0; i<sizeof(buffer); i++)
++		{
++			if (buffer[i] == '\n') break;
++			else if (buffer[i] == ',' && buffer[i+1] == 'M')
++			{
++				if(start_flag == 0)
++				{
++					start_flag=1;
++					startM[0] = buffer[i+2];
++					if (buffer[i+3] != '.')
++					{	
++						startM[1] = buffer[i+3];
++						startW[0] = buffer[i+5];
++					}
++					else if (buffer[i+3] == '.')
++					{
++						startW[0] = buffer[i+4];
++					}
++					else continue;
++				}
++				else if(start_flag == 1)
++				{
++					end_flag=1;
++					endM[0] = buffer[i+2];
++					if (buffer[i+3] != '.')
++					{	
++						endM[1] = buffer[i+3];
++						endW[0] = buffer[i+5];
++					}
++					else if (buffer[i+3] == '.')
++					{
++						endW[0] = buffer[i+4];
++					}
++					else continue;
++				}		
++			}
++			else continue;
++		}	
++
++		if(start_flag == 1 && end_flag == 1)
++		{
++			if((atoi(startM) <= atoi(curM)) && (atoi(curM) <= atoi(endM)) )
++			{
++				if(atoi(startM) == atoi(curM))
++				{
++					if(atoi(curW) >= atoi(startW)) dst_flag = 1;
++				}
++				else if(atoi(endM) == atoi(curM))
++				{
++					if(atoi(curW) <= atoi(endW)) dst_flag = 1;
++				}	
++				else
++					 dst_flag = 1;
++			}
++			else if((atoi(endM) <= atoi(startM)) && (atoi(startM) <= atoi(curM)) )
++			{
++				if(atoi(startM) == atoi(curM))
++				{
++					if(atoi(curW) >= atoi(startW)) dst_flag = 1;
++				}
++				else
++					dst_flag = 1;
++			}
++			else if((atoi(curM) <= atoi(endM)) && (atoi(endM) <= atoi(startM)) )
++			{
++				if(atoi(endM) == atoi(curM))
++				{
++					if(atoi(curW) <= atoi(endW)) dst_flag = 1;
++				}	
++				else
++					dst_flag = 1;	
++			}
++		}
++
++		if( dst_flag == 1)
++		{
++			tv_set.tv_sec  += 60*60;
++			printf("Current month %s is in Daylight Saving start M:%s to end M:%s\n", curM, startM, endM);
++		}
++	}	
++	
+ 	/* divide xmttime.fine by 4294.967296 */
+ 	tv_set.tv_usec = USEC(new->fine);
+ 	if (settimeofday(&tv_set,NULL)<0) {
+@@ -691,9 +800,10 @@
+ 				(ntpc.cross_check)=0;
+ 				break;
+ 
+-                        case 'o':
+-                                time_offset = atoi(optarg);
+-                                break;
++			case 'o':
++				time_offset = atoi(optarg);
++				daylightSaving = 1;
++				break;
+ 
+ 			default:
+ 				usage(argv[0]);
+@@ -725,8 +835,8 @@
+ 		"  -p local_port  %d\n"
+ 		"  -q min_delay   %f\n"
+ 		"  -s set_clock   %d\n"
+-		"  -x cross_check %d\n",
+-                "  -o time_offset   %d\n",
++		"  -x cross_check %d\n"
++		"  -o time_offset   %d\n",
+ 		ntpc.probe_count, debug, ntpc.goodness,
+ 		hostname, ntpc.cycle_time, ntpc.live, udp_local_port, min_delay,
+ 		ntpc.set_clock, ntpc.cross_check, time_offset );

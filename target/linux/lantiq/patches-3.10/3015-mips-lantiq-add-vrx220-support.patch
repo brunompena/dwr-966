@@ -1,0 +1,45 @@
+# HG changeset patch
+# Parent f3949756d6b37da21d253ca86a0635bb48548cac
+diff --git a/arch/mips/include/asm/mach-lantiq/xway/lantiq_soc.h b/arch/mips/include/asm/mach-lantiq/xway/lantiq_soc.h
+--- a/arch/mips/include/asm/mach-lantiq/xway/lantiq_soc.h
++++ b/arch/mips/include/asm/mach-lantiq/xway/lantiq_soc.h
+@@ -36,6 +36,7 @@
+ #define SOC_ID_VRX268_2		0x00C /* v1.2 */
+ #define SOC_ID_GRX288_2		0x00D /* v1.2 */
+ #define SOC_ID_GRX282_2		0x00E /* v1.2 */
++#define SOC_ID_VRX220		0x000
+ 
+ #define SOC_ID_ARX362		0x004
+ #define SOC_ID_ARX368		0x005
+@@ -56,6 +57,7 @@
+ #define SOC_TYPE_AMAZON_SE	0x06
+ #define SOC_TYPE_AR10		0x07
+ #define SOC_TYPE_GRX390		0x08
++#define SOC_TYPE_VRX220		0x09
+ 
+ static inline int ltq_is_ase(void)
+ {
+diff --git a/arch/mips/lantiq/xway/prom.c b/arch/mips/lantiq/xway/prom.c
+--- a/arch/mips/lantiq/xway/prom.c
++++ b/arch/mips/lantiq/xway/prom.c
+@@ -22,6 +22,7 @@
+ #define SOC_AR9		"AR9"
+ #define SOC_GR9		"GRX200"
+ #define SOC_VR9		"xRX200"
++#define SOC_VRX220	"xRX220"
+ #define SOC_AR10	"xRX300"
+ #define SOC_GRX390	"xRX330"
+ 
+@@ -106,6 +107,12 @@
+ 		i->compatible = COMP_VR9;
+ 		break;
+ 
++	case SOC_ID_VRX220:
++		i->name = SOC_VRX220;
++		i->type = SOC_TYPE_VRX220;
++		i->compatible = COMP_VR9;
++		break;
++
+ 	case SOC_ID_GRX282_2:
+ 	case SOC_ID_GRX288_2:
+ 		i->name = SOC_GR9;

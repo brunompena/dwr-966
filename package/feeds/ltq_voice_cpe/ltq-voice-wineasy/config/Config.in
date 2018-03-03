@@ -1,0 +1,54 @@
+menu "advanced configuration (for developers)"
+	depends on PACKAGE_ltq-voice-wineasy
+
+config LTQ_VOICE_WINEASY_USER_FLAGS
+        depends on PACKAGE_ltq-voice-wineasy
+        string "Additional CFLAGS"
+        default ""
+        help
+                Additional CFLAGS for compilation (for developers)
+
+config LTQ_VOICE_WINEASY_USER_OPTIONS
+        depends on PACKAGE_ltq-voice-wineasy
+        string "Additional autogen configure options"
+        default ""
+        help
+                Additional autogen configure options (for developers)
+
+config  LTQ_VOICE_WINEASY_IFXOS_SUPPORT
+	bool "enable IFXOS library support"
+	depends on PACKAGE_ltq-voice-wineasy
+	default n
+	help
+		Option to enable IFXOS library usage
+endmenu
+
+choice
+   prompt "board selection"
+   depends on PACKAGE_ltq-voice-wineasy
+   default LTQ_VOICE_WINEASY_BOARD_EASY508xx     if (                                                TARGET_ltqcpe_ar9  || TARGET_ltqcpe_platform_ar9 || TARGET_ifxcpe_platform_ar9)
+   default LTQ_VOICE_WINEASY_BOARD_EASY80910     if (TARGET_lantiq_xrx200 ||                         TARGET_ltqcpe_vr9  || TARGET_ltqcpe_platform_vr9 || TARGET_ifxcpe_platform_vr9)
+   default LTQ_VOICE_WINEASY_BOARD_XWAY_XRX300   if (TARGET_lantiq_xrx300 || TARGET_lantiq_xrx330 || TARGET_ltqcpe_ar10 || TARGET_ltqcpe_platform_ar10)
+   default LTQ_VOICE_WINEASY_BOARD_EASY80910
+   help
+      Select the board the image will run on.
+
+   config LTQ_VOICE_WINEASY_BOARD_EASY508xx
+      bool "EASY508xx XWAY(TM) XRX100 Family Board"
+
+   config LTQ_VOICE_WINEASY_BOARD_EASY80910
+      bool "EASY809xx XWAY(TM) XRX200 Family Board"
+
+   config LTQ_VOICE_WINEASY_BOARD_XWAY_XRX300
+      bool "EASY3xx XWAY(TM) XRX300 Family Board / EASY389 BOND Reference Board"
+
+endchoice
+
+config  LTQ_VOICE_WINEASY_DXT_EXT
+	bool "enable DUSLIC-xT extension board support"
+	depends on PACKAGE_ltq-voice-wineasy
+	depends on PACKAGE_ltq-voice-duslic_xt
+	default y
+	help
+		enable DUSLIC-xT extension board support
+

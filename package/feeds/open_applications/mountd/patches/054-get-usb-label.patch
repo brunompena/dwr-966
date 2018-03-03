@@ -1,0 +1,101 @@
+--- mountd-0.1_org/lib/mount.c	2015-02-16 15:29:48.314821656 +0800
++++ mountd-0.1/lib/mount.c	2015-02-16 15:31:43.978177396 +0800
+@@ -338,6 +338,47 @@
+ 	return 0;
+ }
+ 
++int mount_find_label(char *label)
++{	
++	struct list_head *p;	
++	list_for_each(p, &mounts)	
++	{		
++		struct mount *q = container_of(p, struct mount, list);		
++		if(!strcmp(q->serial, label))			
++			return 1;		
++		log_printf("mount_find_label : %s %s %d\n", q->name, q->dev, q->serial);	
++	}	
++	return 0;
++}
++
++char* mount_get_label(char *dev, char *serial)
++{	
++	char cmdbuffer[100] = {0};       	
++	FILE *fd = -1;	
++	static char label[64];	
++	memset(label, 0, 64);		    
++	sprintf(cmdbuffer,"blkid /dev/%s | grep LABEL | awk '{print $2}' | cut -d '\"' -f 2", dev);    
++	log_printf("cmd=%s\n", cmdbuffer);    
++	fd = popen(cmdbuffer,"r");    
++	if(fgets(label,sizeof(label),fd) == NULL)    
++	{ 		
++		snprintf(label, 64, "unknown_%s", serial);		    
++	}    
++	else    
++	{        
++		label[strlen(label)-1] = '\0';		
++
++		//label is duplicate		
++		if (mount_find_label(label)) 		
++		{			
++			snprintf(label, 64, "%s_%s", label, serial);		
++		}		    
++	}    
++	pclose(fd);	
++	log_printf("device name = %s, label = %s\n", dev, label);	    
++	return label;
++}
++
+ char* mount_get_serial(char *dev)
+ {
+ 	static char tmp[64];
+@@ -427,7 +468,7 @@
+ 			uniq[i%6] += serial[i];
+ 		}
+ 		sprintf(disc_id, "%08X%02X%02X", *((unsigned int*)&uniq[0]), uniq[4], uniq[5]);
+-		//log_printf("Serial number - %s %s\n", serial, disc_id);
++		log_printf("Serial number - %s %s\n", serial, disc_id);
+ 		return disc_id;
+ 	}
+ 	return 0;
+@@ -441,7 +482,8 @@
+ 		char node[64];
+ 		char name[64];
+ 		int ignore = 0;
+-		char *s;
++		char *serial;
++		char *label;
+ 		char tmp[64];
+ 		char tmp2[64];
+ 		char *p;
+@@ -454,9 +496,11 @@
+ 		FILE *fp;
+ 		strcpy(name, dev);
+ 		name[3] = '\0';
+-		s = mount_get_serial(name);
+-		if(!s)
++		serial = mount_get_serial(name);
++		if(!serial)
+ 			return;
++
++		label = mount_get_label(dev, serial);
+ 		if(dev[3])
+ 		{
+ 			snprintf(tmp, 64, "part%s", &dev[3]);
+@@ -475,7 +519,7 @@
+ 			node[5] += 'A';
+ 		} */
+ 		ctx = ucix_init("mountd");
+-		p = ucix_get_option(ctx, "mountd", s, tmp);
++		p = ucix_get_option(ctx, "mountd", label, tmp);
+ 		ucix_cleanup(ctx);
+ 		if(p)
+ 		{
+@@ -557,7 +601,7 @@
+ 			fclose(fp);
+ 		}
+ 		snprintf(tmp, 64, "/dev/%s", dev);
+-		mount_add_list(node, dev, s, vendor, model, rev, ignore, size, sector_size, detect_fs(tmp));
++		mount_add_list(node, dev, label, vendor, model, rev, ignore, size, sector_size, detect_fs(tmp));
+ 		mount_dump_uci_state();
+ 	}
+ }

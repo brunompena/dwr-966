@@ -1,0 +1,182 @@
+diff -Nur hostap-22760dd_ori/src/wps/wps_common.c hostap-22760dd/src/wps/wps_common.c
+--- hostap-22760dd_ori/src/wps/wps_common.c	2015-01-19 09:58:49.025922862 +0800
++++ hostap-22760dd/src/wps/wps_common.c	2015-01-19 10:54:25.187221966 +0800
+@@ -609,3 +609,19 @@
+ 	return ret;
+ }
+ #endif /* CONFIG_WPS_NFC */
++#ifdef CONFIG_NO_WPS_LED
++
++void write_wps_led_value(int value)
++{
++    return;
++}
++#else
++void write_wps_led_value(int value)
++{
++    char cmdbuf[128];
++    
++    memset(cmdbuf, 0, sizeof(cmdbuf));
++    sprintf(cmdbuf, "/usr/local/bin/wifiWPSled.sh %d &", value);
++    system(cmdbuf);
++}
++#endif
+diff -Nur hostap-22760dd_ori/src/wps/wps_enrollee.c hostap-22760dd/src/wps/wps_enrollee.c
+--- hostap-22760dd_ori/src/wps/wps_enrollee.c	2015-01-19 09:58:49.025922862 +0800
++++ hostap-22760dd/src/wps/wps_enrollee.c	2015-01-19 10:08:36.697231511 +0800
+@@ -418,6 +418,7 @@
+ 	case SEND_M1:
+ 		msg = wps_build_m1(wps);
+ 		*op_code = WSC_MSG;
++		//write_wps_led_value(WPS_LED_BLINK_ACT);
+ 		break;
+ 	case SEND_M3:
+ 		msg = wps_build_m3(wps);
+@@ -447,8 +448,10 @@
+ 	case SEND_WSC_NACK:
+ 		msg = wps_build_wsc_nack(wps);
+ 		*op_code = WSC_NACK;
++		write_wps_led_value(WPS_LED_BLINK_ERR);
+ 		break;
+ 	case WPS_MSG_DONE:
++		write_wps_led_value(WPS_LED_ON);
+ 		msg = wps_build_wsc_done(wps);
+ 		*op_code = WSC_Done;
+ 		break;
+@@ -1332,7 +1335,8 @@
+ 					      enum wsc_op_code op_code,
+ 					      const struct wpabuf *msg)
+ {
+-
++	int oldstate;
++	enum wps_process_res ret = WPS_CONTINUE;
+ 	wpa_printf(MSG_DEBUG, "WPS: Processing received message (len=%lu "
+ 		   "op_code=%d)",
+ 		   (unsigned long) wpabuf_len(msg), op_code);
+@@ -1351,17 +1355,35 @@
+ 	switch (op_code) {
+ 	case WSC_MSG:
+ 	case WSC_UPnP:
+-		return wps_process_wsc_msg(wps, msg);
++		ret = wps_process_wsc_msg(wps, msg);
++		if(ret == WPS_FAILURE) {
++			write_wps_led_value(WPS_LED_BLINK_ERR);
++		}
++		return ret; 
+ 	case WSC_ACK:
+ 		if (wps_validate_wsc_ack(msg) < 0)
+ 			return WPS_FAILURE;
+-		return wps_process_wsc_ack(wps, msg);
++		ret = wps_process_wsc_ack(wps, msg);
++		if(ret == WPS_FAILURE) {
++			write_wps_led_value(WPS_LED_BLINK_ERR);
++		} 
++		return ret ;
+ 	case WSC_NACK:
+ 		if (wps_validate_wsc_nack(msg) < 0)
+ 			return WPS_FAILURE;
+-		return wps_process_wsc_nack(wps, msg);
++		oldstate = wps->state ;
++		ret = wps_process_wsc_nack(wps, msg);
++		if((wps->wps->wps_state == WPS_STATE_CONFIGURED) && 
++		   (wps->state == SEND_WSC_NACK) && 
++		   (oldstate == RECV_M8)) {
++			write_wps_led_value(WPS_LED_ON);
++		} else { 
++			write_wps_led_value(WPS_LED_BLINK_ERR);
++		}
++		return ret; 
+ 	default:
+ 		wpa_printf(MSG_DEBUG, "WPS: Unsupported op_code %d", op_code);
++		write_wps_led_value(WPS_LED_BLINK_ERR);
+ 		return WPS_FAILURE;
+ 	}
+ }
+diff -Nur hostap-22760dd_ori/src/wps/wps_i.h hostap-22760dd/src/wps/wps_i.h
+--- hostap-22760dd_ori/src/wps/wps_i.h	2015-01-19 09:58:48.985923020 +0800
++++ hostap-22760dd/src/wps/wps_i.h	2015-01-19 10:09:18.777171242 +0800
+@@ -13,7 +13,10 @@
+ #include "wps_attr_parse.h"
+ 
+ struct wps_nfc_pw_token;
+-
++#define WPS_LED_OFF         0 
++#define WPS_LED_ON          1
++#define WPS_LED_BLINK_ACT   2 // light LED 0.3 sec every 1 sec
++#define WPS_LED_BLINK_ERR   3 // light LED 0.3 sec every 2 sec
+ /**
+  * struct wps_data - WPS registration protocol data
+  *
+diff -Nur hostap-22760dd_ori/src/wps/wps_registrar.c hostap-22760dd/src/wps/wps_registrar.c
+--- hostap-22760dd_ori/src/wps/wps_registrar.c	2015-01-19 09:58:48.975922013 +0800
++++ hostap-22760dd/src/wps/wps_registrar.c	2015-01-19 10:11:32.397232696 +0800
+@@ -962,6 +962,7 @@
+ 	wpa_printf(MSG_DEBUG, "WPS: PBC timed out - disable PBC mode");
+ 	wps_pbc_timeout_event(reg->wps);
+ 	wps_registrar_stop_pbc(reg);
++	write_wps_led_value(WPS_LED_OFF);
+ }
+ 
+ 
+@@ -1001,6 +1002,7 @@
+ 					 (u8 *) "\xff\xff\xff\xff\xff\xff");
+ 	wps_registrar_selected_registrar_changed(reg);
+ 
++	write_wps_led_value(WPS_LED_BLINK_ACT);
+ 	eloop_cancel_timeout(wps_registrar_set_selected_timeout, reg, NULL);
+ 	eloop_cancel_timeout(wps_registrar_pbc_timeout, reg, NULL);
+ 	eloop_register_timeout(WPS_PBC_WALK_TIME, 0, wps_registrar_pbc_timeout,
+@@ -1953,6 +1955,7 @@
+ 	wpabuf_free(plain);
+ 
+ 	wps->state = RECV_DONE;
++	write_wps_led_value(WPS_LED_ON);
+ 	return msg;
+ }
+ 
+@@ -2887,6 +2890,7 @@
+ 		}
+ #endif /* CONFIG_WPS_UPNP */
+ 		ret = wps_process_m1(wps, &attr);
++		write_wps_led_value(WPS_LED_BLINK_ACT);
+ 		break;
+ 	case WPS_M3:
+ 		if (wps_validate_m3(msg) < 0)
+@@ -3241,15 +3245,26 @@
+ 
+ 	switch (op_code) {
+ 	case WSC_MSG:
+-		return wps_process_wsc_msg(wps, msg);
++		ret = wps_process_wsc_msg(wps, msg);
++		if(ret == WPS_FAILURE) {
++			write_wps_led_value(WPS_LED_BLINK_ERR);
++		}
++		return ret;
+ 	case WSC_ACK:
+ 		if (wps_validate_wsc_ack(msg) < 0)
+ 			return WPS_FAILURE;
+-		return wps_process_wsc_ack(wps, msg);
++		ret = wps_process_wsc_ack(wps, msg);
++		if(ret == WPS_FAILURE) {
++		write_wps_led_value(WPS_LED_BLINK_ERR);
++		}
++		return ret; 
+ 	case WSC_NACK:
+ 		if (wps_validate_wsc_nack(msg) < 0)
+ 			return WPS_FAILURE;
+-		return wps_process_wsc_nack(wps, msg);
++		ret = wps_process_wsc_nack(wps, msg);
++		if(ret == WPS_FAILURE) {
++		write_wps_led_value(WPS_LED_BLINK_ERR);
++		}
+ 	case WSC_Done:
+ 		if (wps_validate_wsc_done(msg) < 0)
+ 			return WPS_FAILURE;
+@@ -3262,6 +3277,7 @@
+ 		}
+ 		return ret;
+ 	default:
++		write_wps_led_value(WPS_LED_BLINK_ERR);
+ 		wpa_printf(MSG_DEBUG, "WPS: Unsupported op_code %d", op_code);
+ 		return WPS_FAILURE;
+ 	}

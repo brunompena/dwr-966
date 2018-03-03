@@ -1,0 +1,86 @@
+menu "advanced configuration (for developers)"
+	depends on PACKAGE_ltq-voice-vmmc
+
+config LTQ_VOICE_VMMC_USER_FLAGS
+	depends on PACKAGE_ltq-voice-vmmc
+	string "Additional CFLAGS"
+	default ""
+        help
+                Additional CFLAGS for compilation (for developers)
+
+config LTQ_VOICE_VMMC_USER_OPTIONS
+	depends on PACKAGE_ltq-voice-vmmc
+	string "Additional autogen configure options"
+        default ""
+        help
+                Additional autogen configure options (for developers)
+
+config LTQ_VOICE_VMMC_MPS_HISTORY_SIZE
+	depends on PACKAGE_ltq-voice-vmmc
+	string "MPS history buffer in words (0<=size<=512)"
+	default "128"
+	help
+		MPS history buffer (default=128 words, maximum=512 words, 0=disable)
+		To opimize the memory footprint in RAM, you might want to set the
+		buffer size to 0.
+endmenu
+
+choice
+	depends on PACKAGE_ltq-voice-vmmc
+	prompt "device selection"
+	default LTQ_VOICE_VMMC_WITH_DEVICE_XRX100 if (                                                TARGET_ltqcpe_ar9  || TARGET_ltqcpe_platform_ar9 || TARGET_ifxcpe_platform_ar9)
+	default LTQ_VOICE_VMMC_WITH_DEVICE_XRX200 if (TARGET_lantiq_xrx200 ||                         TARGET_ltqcpe_vr9  || TARGET_ltqcpe_platform_vr9 || TARGET_ifxcpe_platform_vr9)
+	default LTQ_VOICE_VMMC_WITH_DEVICE_XRX300 if (TARGET_lantiq_xrx300 || TARGET_lantiq_xrx330 || TARGET_ltqcpe_ar10 || TARGET_ltqcpe_platform_ar10)
+	help
+		Select the target device.
+
+	config LTQ_VOICE_VMMC_WITH_DEVICE_XRX100
+		bool "xRX100 family"
+		select PACKAGE_ltq-voice-vmmc-xrx100-firmware
+		select PACKAGE_ltq-voice-vmmc-xrx100-coef
+
+	config LTQ_VOICE_VMMC_WITH_DEVICE_XRX200
+		bool "xRX200 family"
+		select PACKAGE_ltq-voice-vmmc-xrx200-firmware
+		select PACKAGE_ltq-voice-vmmc-xrx200-coef
+
+	config LTQ_VOICE_VMMC_WITH_DEVICE_XRX300
+		bool "xRX300 family"
+		select PACKAGE_ltq-voice-vmmc-xrx300-firmware
+		select PACKAGE_ltq-voice-vmmc-xrx300-coef
+endchoice
+
+config LTQ_VOICE_VMMC_PMU
+	depends on PACKAGE_ltq-voice-vmmc
+	bool "Power Management Unit support"
+	default y
+	help
+		Option to use Power Management Unit functionality.
+
+config LTQ_VOICE_VMMC_DISABLE_DECT_NIBBLE_SWAP
+	depends on PACKAGE_ltq-voice-vmmc
+	bool "disable DECT nibble swap"
+	default n
+	help
+		Option to disable DECT nibble swap for COSIC modem.
+		This is only needed for backward compatibility.
+
+config LTQ_VOICE_VMMC_SSLIC_FXO_ACTIVATE
+	depends on PACKAGE_ltq-voice-vmmc
+	bool "Activate SmartSLIC FXO ports upon TAPI init"
+	default n
+	help
+		Option to activate FXO ports connected to a SmartSLIC by default.
+                This should be disabled unless there is an FXO chip connected to
+                the GPIOs of the SmartSLIC. Otherwise the SmartSLIC may consume
+                quite some processor power depending on the signals on the GPIO pins
+                of the SmartSLIC.
+                Do not set for the LANTIQ xRX100 or xRX200 Family boards.
+
+config LTQ_VOICE_VMMC_RTCP_XR
+	depends on PACKAGE_ltq-voice-vmmc
+	bool "RTCP Extended Reports support"
+	default y
+	help
+		Option to enable support for the RTCP Extended Reports (RFC3611) functionality.
+

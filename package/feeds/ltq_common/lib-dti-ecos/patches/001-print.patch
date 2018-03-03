@@ -1,0 +1,105 @@
+# HG changeset patch
+# User INgo Rah <INgo.Rah@lantiq.com>
+# Date 1385720321 -3600
+# Node ID 895ba4bd94f797484e9314ec512e76d8afbaeca7
+# Parent  8a0a47419af2caa309325c17200a697671d298a1
+Add compile switch to disable error and debug printouts (per default switched on)
+
+diff --git a/configure.in b/configure.in
+--- a/configure.in
++++ b/configure.in
+@@ -221,13 +221,33 @@
+ 	]
+ )
+ 
+-dnl Enable debugging mode
+-AC_ARG_ENABLE(error_print,
++dnl Enable error printouts
++AC_ARG_ENABLE(error-print,
+ 	AS_HELP_STRING(
+ 		[--enable-error-print],
+ 		[Enable error messages]
+ 	),
+-	DTI_TARGET_OPTIONS="$DTI_TARGET_OPTIONS -DERROR_PRINT"
++	[
++		if test "$enableval" = no; then
++			DTI_TARGET_OPTIONS="$DTI_TARGET_OPTIONS -DDTI_ERROR_PRINT=0"
++			echo "disable error prints"
++		else
++			echo "enable error prints"
++		fi
++	],
++)
++
++dnl Enable debugging mode
++AC_ARG_ENABLE(debug-print,
++	AS_HELP_STRING(
++		[--enable-debug-print],
++		[Enable debug messages]
++	),
++	[
++		if test "$enableval" = no; then
++			DTI_TARGET_OPTIONS="$DTI_TARGET_OPTIONS -DDTI_DEBUG_PRINT=0"
++		fi
++	],
+ )
+ 
+ dnl set the number of max supported channels
+diff --git a/src/common/dti_control.c b/src/common/dti_control.c
+--- a/src/common/dti_control.c
++++ b/src/common/dti_control.c
+@@ -162,7 +162,7 @@
+    ========================================================================= */
+ 
+ /* Create tcp debug module - user part */
+-IFXOS_PRN_USR_MODULE_CREATE(DTI_DBG, IFXOS_PRN_LEVEL_HIGH);
++IFXOS_PRN_USR_MODULE_CREATE(DTI_DBG, IFXOS_PRN_LEVEL_NORMAL);
+ 
+ /* Default values */
+ IFX_boolean_t  DTI_configLocked = IFX_FALSE;
+diff --git a/src/include/dti_osmap.h b/src/include/dti_osmap.h
+--- a/src/include/dti_osmap.h
++++ b/src/include/dti_osmap.h
+@@ -127,6 +127,24 @@
+ /* ==========================================================================
+    Map the standard types and functions to the project naming conventions
+    ========================================================================== */
++#ifndef DTI_DEBUG_PRINT
++#	define DTI_DEBUG_PRINT	1
++#endif
++
++#ifndef DTI_ERROR_PRINT
++#	define DTI_ERROR_PRINT	1
++#endif
++#if (   !defined(IFXOS_HAVE_PRINT) \
++	|| (defined(IFXOS_HAVE_PRINT) && (IFXOS_HAVE_PRINT == 0)))
++#	ifdef DTI_DEBUG_PRINT
++#		undef DTI_DEBUG_PRINT
++#	endif
++#	ifdef DTI_ERROR_PRINT
++#		undef DTI_ERROR_PRINT
++#	endif
++#	define DTI_DEBUG_PRINT  0
++#	define DTI_ERROR_PRINT  0
++#endif      /* #if ( !defined(IFXOS_HAVE_PRINT) || ... ) */
+ 
+ #define DTI_Printf                  (void)printf
+ #define DTI_GetChar                 IFXOS_GetChar
+@@ -182,8 +200,17 @@
+ #define DTI_Free                    IFXOS_MemFree
+ 
+ /* debug stuff */
++#if (DTI_DEBUG_PRINT == 1)
+ #define DTI_PRN_USR_DBG_NL          IFXOS_PRN_USR_DBG_NL
++#else
++#define DTI_PRN_USR_DBG_NL(module_name, dbg_level, print_message)  /*lint -e{19} */
++#endif  /* #if (DLI_DEBUG_PRINT == 1) */
++#if (DTI_ERROR_PRINT == 1)
+ #define DTI_PRN_USR_ERR_NL          IFXOS_PRN_USR_ERR_NL
++#else
++#define DTI_PRN_USR_ERR_NL(module_name, dbg_level, print_message)  /*lint -e{19} */
++#endif  /* #if (DLI_DEBUG_PRINT == 1) */
++
+ #define DTI_PRN_LEVEL_HIGH          IFXOS_PRN_LEVEL_HIGH
+ #define DTI_PRN_LEVEL_NORMAL        IFXOS_PRN_LEVEL_NORMAL
+ #define DTI_PRN_LEVEL_LOW           IFXOS_PRN_LEVEL_LOW

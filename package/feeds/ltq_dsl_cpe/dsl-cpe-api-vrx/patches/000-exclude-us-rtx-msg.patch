@@ -1,0 +1,15 @@
+diff -Naur org/src/device/drv_dsl_cpe_msg_vrx.c new/src/device/drv_dsl_cpe_msg_vrx.c
+--- org/src/device/drv_dsl_cpe_msg_vrx.c	2013-11-26 19:16:37.668150000 +0100
++++ new/src/device/drv_dsl_cpe_msg_vrx.c	2013-12-05 17:59:32.271688000 +0100
+@@ -134,9 +134,9 @@
+    CMD_RTX_CONTROL,                 /*     +     :      +      :      +       */
+    CMD_RTX_STATUSGET,               /*     +     :      +      :      +       */
+    CMD_RTX_DS_STATSGET,             /*     +     :      +      :      +       */
+-   CMD_RTX_US_STATSGET,             /*     +     :      +      :      +       */
++   /*CMD_RTX_US_STATSGET,*/         /*     +     :      +      :      +       */
+    CMD_RTX_PM_DS_GET,               /*     +     :      +      :      +       */
+-   CMD_RTX_PM_US_GET,               /*     +     :      +      :      -/+     */
++   /*CMD_RTX_PM_US_GET,*/           /*     +     :      +      :      -/+     */
+    CMD_PAF_HS_CONTROL,              /*     +     :      +      :      -/+     */
+    CMD_PAF_HS_STATUSGET,            /*     +     :      +      :      -/+     */
+    CMD_PAF_HS_CONTINUE,             /*     +     :      +      :      -/+     */

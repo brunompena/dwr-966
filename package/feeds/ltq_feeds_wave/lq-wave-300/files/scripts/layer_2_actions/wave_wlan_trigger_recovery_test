@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# Defines
+if [ ! "$MTLK_INIT_PLATFORM" ]; then
+   . /tmp/mtlk_init_platform.sh
+fi
+
+apIndex=$1
+time=$2
+iteration=$3
+assert_type=$4
+# increment iteration by 1 in order to get into the loop
+if [ "$iteration" = "0" ]
+then
+	let iteration=$iteration+1
+fi
+# assert_type may be missing in script call:
+if [ -z $assert_type ]; then assert_type=0; fi
+
+# Get corresponding wlan network interface from mapping file
+wlan=`find_wave_if_from_index $apIndex`
+
+print2log DBG "wave_wlan_trigger_recovery_test: interface=$wlan, assert_type=$assert_type"
+
+while [ "$iteration" -gt "0" ]
+do
+   sleep $time
+   iwpriv $wlan sDoFwDebug 1 $assert_type
+   let iteration=$iteration-1
+done 

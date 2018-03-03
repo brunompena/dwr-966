@@ -1,0 +1,107 @@
+--- MTLKConfig.orig	2014-03-04 11:39:08.000000000 +0200
++++ MTLKConfig	2014-03-04 16:55:57.000000000 +0200
+@@ -104,6 +104,11 @@
+ 	help
+ 	  Lantiq AR10 platform.
+ 
++config PLATFORM_LQ_UGW61_AR10_WAVE400
++	bool "UGW6.1 for AR10 WAVE400"
++	help
++	  Lantiq UGW6.1 AR10 platform.
++
+ config PLATFORM_GEN35FPGA
+ 	bool "Gen 3.5 FPGA"
+ 	help
+@@ -159,6 +164,11 @@
+ 	help
+ 	  AMCC405 DECA platform.
+ 
++config PLATFORM_LQ_UGW
++	bool "UGW for all platforms"
++	help
++	  Lantiq UGW platform.
++
+ endchoice
+ 
+ config STAR4MB_NO_DSPAD
+@@ -208,6 +218,7 @@
+ 	default y if PLATFORM_UGW54_VRX288
+ 	default y if PLATFORM_LQ_UGW52_VB300
+ 	default y if PLATFORM_UGW53_ARX168
++	default y if PLATFORM_LQ_UGW
+ 	default n
+ 	help
+ 	  Enable support for Peripheral Component Interconnect bus (PCI)
+@@ -228,6 +239,8 @@
+ 	default y if PLATFORM_UGW53_ARX168
+ 	default y if (PLATFORM_LQ_UGW52_VB300 || PLATFORM_UGW52_ARX300)
+ 	default y if PLATFORM_AMCC405_DECA
++	default y if PLATFORM_LQ_UGW
++	default y if PLATFORM_LQ_UGW_AR10_WAVE400
+ 	default n if PLATFORM_UGW61_ARX388
+ 	default n if PLATFORM_UGW61_VRX388
+ 	default n
+@@ -253,6 +266,7 @@
+ 	default y if PLATFORM_UGW54_VRX388
+ 	default y if PLATFORM_UGW61_ARX388
+ 	default y if PLATFORM_UGW61_VRX388
++	default y if PLATFORM_LQ_UGW61_AR10_WAVE400
+ 	default n
+ 	help
+ 	  Enable support for Advanced High-performance Bus (AHB)
+@@ -273,8 +287,10 @@
+   default y if PLATFORM_UGW54_ARX382
+   default y if PLATFORM_UGW54_GRX388
+   default y if PLATFORM_UGW54_VRX388
++  default y if PLATFORM_GEN35FPGA
+   default y if PLATFORM_UGW61_ARX388
+   default y if PLATFORM_UGW61_VRX388
++  default y if PLATFORM_LQ_UGW61_AR10_WAVE400
+   default n
+ 
+ config PMCU_SUPPORT
+@@ -570,8 +586,10 @@
+ 	default y if PLATFORM_UGW54_VRX288
+ 	default y if PLATFORM_LQ_UGW52_VB300
+ 	default y if PLATFORM_LQ_UGW_AR10_WAVE400
++	default y if PLATFORM_LQ_UGW
+ 	default y if PLATFORM_UGW61_ARX388
+ 	default y if PLATFORM_UGW61_VRX388
++	default y if PLATFORM_LQ_UGW61_AR10_WAVE400
+ 	default n
+ 	
+ config USE_GENL
+@@ -607,6 +625,8 @@
+ 	default y if PLATFORM_UGW54_VRX388
+ 	default y if PLATFORM_UGW54_VRX288
+ 	default y if PLATFORM_GEN35FPGA
++	default y if PLATFORM_LQ_UGW
++	default y if PLATFORM_LQ_UGW_AR10_WAVE400
+ 	default y if PLATFORM_UGW61_ARX388
+ 	default y if PLATFORM_UGW61_VRX388
+ 	default n
+@@ -641,10 +661,12 @@
+ 	default "deca-linux26" if PLATFORM_AMCC405_DECA
+ 	default "vb300-linux26" if PLATFORM_VB300
+ 	default "ugw5.2-vb300-linux26" if PLATFORM_LQ_UGW52_VB300
+-	default "ugw-ar10-wave400-linux26" if PLATFORM_LQ_UGW_AR10_WAVE400
+-	default "gen35-fpga-linux26" if PLATFORM_GEN35FPGA
++	default "ugw-linux26" if PLATFORM_LQ_UGW_AR10_WAVE400
++	default "ugw-linux26" if PLATFORM_GEN35FPGA
++	default "ugw-linux26" if PLATFORM_LQ_UGW
+ 	default "ugw6.1-arx388" if PLATFORM_UGW61_ARX388
+ 	default "ugw6.1-vrx388" if PLATFORM_UGW61_VRX388
++	default "ugw-linux310" if PLATFORM_LQ_UGW61_AR10_WAVE400
+ 
+ config HOST_TYPE
+ 	string
+@@ -678,7 +700,9 @@
+ 	default "mips-linux" if PLATFORM_LQ_UGW52_VB300
+ 	default "mips-linux" if PLATFORM_LQ_UGW_AR10_WAVE400
+ 	default "mips-linux" if PLATFORM_GEN35FPGA
++	default "mips-linux" if PLATFORM_LQ_UGW
+ 	default "mips-linux" if PLATFORM_UGW61_ARX388
+ 	default "mips-linux" if PLATFORM_UGW61_VRX388
++	default "mips-linux" if PLATFORM_LQ_UGW61_AR10_WAVE400
+ endmenu
+ 

@@ -1,0 +1,6 @@
+#!/bin/sh
+#
+#:q
+#[ -e /usr/local/bin/webServerInit ] && webServerInit
+/etc/init.d/dropbear start
+

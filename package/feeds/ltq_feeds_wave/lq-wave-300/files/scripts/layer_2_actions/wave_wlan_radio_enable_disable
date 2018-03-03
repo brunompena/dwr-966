@@ -1,0 +1,20 @@
+#!/bin/sh
+
+# Defines
+if [ ! "$MTLK_INIT_PLATFORM" ]; then			
+	. /tmp/mtlk_init_platform.sh
+fi
+print2log DBG "running wave_wlan_radio_enable_disable: args: $*"	
+
+apIndex=$1
+
+timestamp "wave_wlan_radio_enable_disable:$apIndex:begin"
+
+# Get corresponding wlan network interface from mapping file
+wlan=`find_wave_if_from_index $apIndex`
+
+
+CoCPower=`host_api get $$ $apIndex CoCPower`
+$ETC_PATH/driver_api.tcl DriverParamSet $wlan CoCPower "$CoCPower"
+
+print2log DBG "wave_wlan_radio_enable_disable: Done"

@@ -1,0 +1,19 @@
+#!/bin/sh
+if [ -f /sysconfig/ipv6-cfg ]; then
+    cp /sysconfig/ipv6-cfg /tmp/ipv6-cfg.old
+    . /sysconfig/ipv6-cfg
+    if [ "${IPV6_ENABLE}" = "off" ]; then
+        sysctl -w net.ipv6.conf.all.disable_ipv6=1
+        echo "IPv6 ENABLE is off"
+    else
+        echo "IPv6 ENABLE on LanInit"
+        sysctl -w net.ipv6.conf.all.disable_ipv6=0
+        sysctl -w net.ipv6.conf.all.forwarding=1
+    fi
+else
+    echo "No /sysconfig/ipv6-cfg"
+fi
+
+/usr/local/bin/ipv6_lan.sh
+
+/usr/local/bin/routing_ipv6.sh

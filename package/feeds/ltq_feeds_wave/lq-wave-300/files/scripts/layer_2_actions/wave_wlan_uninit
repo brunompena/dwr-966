@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# Defines
+if [ ! "$MTLK_INIT_PLATFORM" ]; then			
+	. /tmp/mtlk_init_platform.sh
+fi
+
+# remove status file
+if [ -e $wave_start_failure ]
+then
+	rm $wave_start_failure
+fi
+if [ -e $wave_init_failure ]
+then
+        rm $wave_init_failure
+fi
+if [ -e $wave_init_success ]
+then
+	rm $wave_init_success
+fi
+$ETC_PATH/mtlk_insmod_wls_driver.sh stop
+$ETC_PATH/mtlk_wls_links.sh stop
+#$ETC_PATH/mtlk_init_bcl_server.sh stop
+$ETC_PATH/wave_wlan_init_rtlogger.sh stop
+# Call mtlk_drvhlpr.sh to validate that drvhlpr exit on rmmod (can call also if interface not exist)
+# mtlk_drvhlpr.sh will kill drvhlpr if exist.
+(. $ETC_PATH/mtlk_drvhlpr.sh stop 0)
+(. $ETC_PATH/mtlk_drvhlpr.sh stop 1)
+return

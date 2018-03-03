@@ -1,0 +1,59 @@
+0. Introduction
+	This file will show you how to build the GPL linux system.
+
+Step1. Install Ubuntu 12.04.5 LTS (i386), and make sure that the system is upgrate to latest updates.
+	
+Step2. Setup build environment.	
+	
+	sudo apt-get update
+	sudo apt-get install vim
+	sudo apt-get install git
+	sudo apt-get install git-core
+	sudo apt-get install curl 
+
+	//////// install g++ /////////////
+	sudo apt-get install g++
+	sudo apt-get install autoconf
+	sudo apt-get install subversion
+	sudo apt-get install bison	
+
+	//////// install ncurse /////////////
+	sudo apt-get install libncurses5-dev	
+
+	//////// install zlib /////////////
+	sudo apt-get install zlib1g-dev 	
+	
+	//////// install flex /////////////
+	download flex_2.5.35-10ubuntu3_i386.deb  http://packages.ubuntu.com/precise/i386/flex/download
+	sudo dpkg -i flex_2.5.35-10ubuntu3_i386.deb 	(There may be error here, please use Linux update manager to update system again)
+	sudo apt-get -f install
+	sudo dpkg -i flex_2.5.35-10ubuntu3_i386.deb  (run this command again)
+	
+	//////// install gawk /////////////
+	download libsigsegv2_2.9-4ubuntu3_i386.deb http://www.filewatcher.com/m/libsigsegv2_2.9-4ubuntu3_i386.deb.14568-0.html
+	sudo dpkg -i libsigsegv2_2.9-4ubuntu3_i386.deb	
+
+	download gawk_4.0.1+dfsg-2_i386.deb http://www.filewatcher.com/m/gawk_4.0.1+dfsg-2_i386.deb.932592-0.html
+	sudo dpkg -i gawk_4.0.1+dfsg-2_i386.deb 	
+	sudo apt-get -f install
+
+	download scsh-common-0.6_0.6.7-8_all.deb http://packages.ubuntu.com/zh-tw/precise/all/scsh-common-0.6/download
+	sudo dpkg -i scsh-common-0.6_0.6.7-8_all.deb
+	
+	downlaod build-essential_11.5ubuntu2_i386.deb http://packages.ubuntu.com/zh-tw/precise/i386/build-essential/download
+	sudo dpkg -i build-essential_11.5ubuntu2_i386.deb (There may be error here, please use Linux update manager to update system again)
+	sudo apt-get -f install
+	sudo dpkg -i build-essential_11.5ubuntu2_i386.deb (run this command again)
+	
+	sudo apt-get install openssh-server 
+	sudo apt-get install gettext  	
+	
+Step3. Build code command
+	1. change the directory to GPL code folder. ex. "GPL_v103CP"
+	2. ./scripts/ltq_change_environment.sh switch ./config/P02003
+	3. compile command: choice one of below commands.
+		3.1 $ make
+		3.2 $ make V=s (for detail compile information)
+		3.3 $ make V=s > compile.log  (if you want to record the compile log)
+	4. After make successfully, you will find the image file in ./bin/lantiq/P02003, the file name should be fullimage.img
+		

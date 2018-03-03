@@ -1,0 +1,17 @@
+# HG changeset patch
+# Parent 73323f1f9dc5526df4c8a11715f3e66d80b78cf5
+
+diff --git a/net/bridge/br_if.c b/net/bridge/br_if.c
+--- a/net/bridge/br_if.c
++++ b/net/bridge/br_if.c
+@@ -392,6 +392,10 @@ int br_add_if(struct net_bridge *br, str
+ 	list_add_rcu(&p->list, &br->port_list);
+ 
+ 	netdev_update_features(br->dev);
++	
++	dev->features |= NETIF_F_SOFT_FEATURES;
++
++	br->dev->features |= NETIF_F_SOFT_FEATURES;
+ 
+ 	spin_lock_bh(&br->lock);
+ 	changed_addr = br_stp_recalculate_bridge_id(br);

@@ -1,0 +1,26 @@
+#! /bin/sh
+test -f /usr/local/bin/tr69d || exit 0
+case "$1" in
+    start)
+          echo -n "Starting tr69d: tr69d"
+          tr69d -d soap,jnr,download,main -f /tmp/tr69client.log -e /usr/local/etc/tr69 &
+          echo "."
+          ;;
+   stop)
+          echo -n "Stopping tr69d: tr69d"
+          killall tr69d
+          echo "."
+           ;;
+   restart)
+          echo -n "Stopping tr69d: tr69d"
+          killall tr69d
+          echo "."
+          echo -n "Starting sshd: sshd"
+          tr69d -d soap,jnr,download,main -f /tmp/tr69client.log -e /usr/local/etc/tr69 &
+          echo "."
+          ;;
+        *)
+          echo "Usage: /etc/init.d/tr69d.jnr start|stop|restart"
+          exit 1
+          ;;
+    esac

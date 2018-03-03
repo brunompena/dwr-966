@@ -1,0 +1,12 @@
+diff -Naur linux/include/linux/net.h ./patches/linux/include/linux/net.h
+--- linux/include/linux/net.h	2008-02-14 15:48:41.000000000 +0530
++++ ./patches/linux/include/linux/net.h	2008-02-14 15:40:08.000000000 +0530
+@@ -26,7 +26,7 @@
+ struct poll_table_struct;
+ struct inode;
+ 
+-#define NPROTO		32		/* should be enough for now..	*/
++#define NPROTO		33		/* should be enough for now..	*/
+ 
+ #define SYS_SOCKET	1		/* sys_socket(2)		*/
+ #define SYS_BIND	2		/* sys_bind(2)			*/

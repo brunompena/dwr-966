@@ -1,0 +1,34 @@
+#!/bin/sh /etc/rc.common
+
+#START=16
+
+start() {
+	#insmod /lib/modules/3.10.12/ipt_ECN.ko
+	insmod /lib/modules/3.10.12/iptable_raw.ko
+	insmod /lib/modules/3.10.12/xt_CONNEXTMARK.ko
+	insmod /lib/modules/3.10.12/xt_CT.ko
+	#insmod /lib/modules/3.10.12/xt_HL.ko
+	insmod /lib/modules/3.10.12/xt_LOG.ko
+	#insmod /lib/modules/3.10.12/xt_NETMAP.ko
+	insmod /lib/modules/3.10.12/xt_TCPOPTSTRIP.ko
+	#insmod /lib/modules/3.10.12/xt_TEE.ko
+	#insmod /lib/modules/3.10.12/xt_addrtype.ko
+	insmod /lib/modules/3.10.12/xt_comment.ko
+	#insmod /lib/modules/3.10.12/xt_connbytes.ko
+	insmod /lib/modules/3.10.12/xt_connlimit.ko
+	#insmod /lib/modules/3.10.12/xt_ecn.ko
+	insmod /lib/modules/3.10.12/xt_iprange.ko
+	#insmod /lib/modules/3.10.12/xt_layer7.ko
+	#insmod /lib/modules/3.10.12/xt_owner.ko
+	#insmod /lib/modules/3.10.12/xt_quota.ko
+	insmod /lib/modules/3.10.12/xt_recent.ko
+	#insmod /lib/modules/3.10.12/xt_statistic.ko
+	insmod /lib/modules/3.10.12/nfnetlink.ko
+	insmod /lib/modules/3.10.12/nf_conntrack_netlink.ko
+	
+	insmod /lib/modules/3.10.12/arp_tables.ko
+	insmod /lib/modules/3.10.12/arptable_filter.ko
+	#insmod /lib/modules/3.10.12/arpt_mangle.ko
+
+	/usr/local/bin/fwnat.sh &
+}

@@ -1,0 +1,60 @@
+#!/bin/sh
+
+# Defines
+if [ ! "$MTLK_INIT_PLATFORM" ]; then			
+	. /tmp/mtlk_init_platform.sh
+fi
+
+apIndex=$1
+
+print2log DBG "running  wave_wlan_get_stats $1"
+timestamp "wave_wlan_get_stats:$apIndex:begin"
+
+# Get corresponding wlan network interface from mapping file
+wlan=`find_wave_if_from_index $apIndex`
+
+TMP_IFCONFIG="/tmp/ifconfig_$$.log"
+TMP_MTDUMP="/tmp/mtdump_$$.log"
+
+# Read statistics once, to temp files
+api_wrapper get ifconfig $wlan \> $TMP_IFCONFIG
+api_wrapper get mtdump $wlan WLANFlowStatus  -f /bin/mtdump.mtidlc_WLANFlowStatus \> $TMP_MTDUMP
+
+# Use mtdump to read statistics - leave value before colon, removing whitespace
+bytesTx=`grep "Number of bytes sent successfully\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+bytesRx=`grep "Number of bytes received\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+pktsTx=`grep "Number of packets transmitted\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+pktsRx=`grep "Number of packets received\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+ucPktsTx=`grep "Number of unicast packets transmitted\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+ucPktsRx=`grep "Number of unicast packets received\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+mcPktsTx=`grep "Number of multicast packets transmitted\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+mcPktsRx=`grep "Number of multicast packets received\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+bcPktsTx=`grep "Number of broadcast packets transmitted\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+bcPktsRx=`grep "Number of broadcast packets received\$" $TMP_MTDUMP | sed -e "s/:.*//" -e "s/ *//g"`
+
+# Use ifconfig to read errors, as it collects all error types to one error and one dropped counter
+errorsTx=`grep "TX.*errors" $TMP_IFCONFIG | sed -e "s/.*errors://" -e "s/ .*//"`
+errorsRx=`grep "RX.*errors" $TMP_IFCONFIG | sed -e "s/.*errors://" -e "s/ .*//"`
+discardPktsTx=`grep "TX.*dropped" $TMP_IFCONFIG | sed -e "s/.*dropped://" -e "s/ .*//"`
+discardPktsRx=`grep "RX.*dropped" $TMP_IFCONFIG | sed -e "s/.*dropped://" -e "s/ .*//"`
+
+
+echo "bytesTx=\"$bytesTx"\"
+echo "bytesRx=\"$bytesRx"\"
+echo "pktsTx=\"$pktsTx"\"
+echo "pktsRx=\"$pktsRx"\"
+echo "errorsTx=\"$errorsTx"\"
+echo "errorsRx=\"$errorsRx"\"
+echo "discardPktsTx=\"$discardPktsTx"\"
+echo "discardPktsRx=\"$discardPktsRx"\"
+echo "ucPktsTx=\"$ucPktsTx"\"
+echo "ucPktsRx=\"$ucPktsRx"\"
+echo "mcPktsTx=\"$mcPktsTx"\"
+echo "mcPktsRx=\"$mcPktsRx"\"
+echo "bcPktsTx=\"$bcPktsTx"\"
+echo "bcPktsRx=\"$bcPktsRx"\"
+
+rm $TMP_IFCONFIG
+rm $TMP_MTDUMP
+
+timestamp "wave_wlan_get_stats:$apIndex:done"

@@ -1,0 +1,335 @@
+Index: miniupnpc-1.6.20120509/upnpc.c
+===================================================================
+--- miniupnpc-1.6.20120509.orig/upnpc.c	2012-05-04 16:22:13.000000000 +0530
++++ miniupnpc-1.6.20120509/upnpc.c	2014-05-15 14:32:56.000000000 +0530
+@@ -9,19 +9,22 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <time.h>
++#include <unistd.h>
++#include <errno.h>
++#include <net/if.h>
+ #ifdef _WIN32
+ #include <winsock2.h>
+ #define snprintf _snprintf
+-#else
+-/* for IPPROTO_TCP / IPPROTO_UDP */
+-#include <netinet/in.h>
+ #endif
+ #include "miniwget.h"
+ #include "miniupnpc.h"
+ #include "upnpcommands.h"
+ #include "upnperrors.h"
++#include "minixml.h"
++#include "getifaddr.h"
+ 
+-/* protofix() checks if protocol is "UDP" or "TCP"
++#ifdef NOTREQUIRED
++/* protofix() checks if protocol is "UDP" or "TCP" 
+  * returns NULL if not */
+ const char * protofix(const char * proto)
+ {
+@@ -40,7 +43,10 @@
+ 		return proto_udp;
+ 	return 0;
+ }
++#endif
++
+ 
++#ifdef NOTREQUIRED
+ static void DisplayInfos(struct UPNPUrls * urls,
+                          struct IGDdatas * data)
+ {
+@@ -91,7 +97,9 @@
+ 	else
+ 		printf("GetExternalIPAddress failed.\n");
+ }
++#endif
+ 
++#ifdef NOTREQUIRED
+ static void GetConnectionStatus(struct UPNPUrls * urls,
+                                struct IGDdatas * data)
+ {
+@@ -104,7 +112,9 @@
+ 	printf("Bytes:   Sent: %8u\tRecv: %8u\n", bytessent, bytesreceived);
+ 	printf("Packets: Sent: %8u\tRecv: %8u\n", packetssent, packetsreceived);
+ }
++#endif
+ 
++#ifdef NOTREQUIRED
+ static void ListRedirections(struct UPNPUrls * urls,
+                              struct IGDdatas * data)
+ {
+@@ -151,7 +161,9 @@
+ 		i++;
+ 	} while(r==0);
+ }
++#endif
+ 
++#ifdef NOTREQUIRED
+ static void NewListRedirections(struct UPNPUrls * urls,
+                                 struct IGDdatas * data)
+ {
+@@ -213,8 +225,10 @@
+ 		       r, strupnperror(r));
+ 	}
+ }
++#endif
+ 
+-/* Test function
++#ifdef NOTREQUIRED
++/* Test function 
+  * 1 - get connection type
+  * 2 - get extenal ip address
+  * 3 - Add port mapping
+@@ -274,7 +288,9 @@
+ 		       externalIPAddress, eport, proto, intClient, intPort, duration);
+ 	}
+ }
++#endif
+ 
++#ifdef NOTREQUIRED
+ static void
+ RemoveRedirect(struct UPNPUrls * urls,
+                struct IGDdatas * data,
+@@ -296,7 +312,9 @@
+ 	r = UPNP_DeletePortMapping(urls->controlURL, data->first.servicetype, eport, proto, 0);
+ 	printf("UPNP_DeletePortMapping() returned : %d\n", r);
+ }
++#endif
+ 
++#ifdef NOTREQUIRED
+ /* IGD:2, functions for service WANIPv6FirewallControl:1 */
+ static void GetFirewallStatus(struct UPNPUrls * urls, struct IGDdatas * data)
+ {
+@@ -314,8 +332,10 @@
+ 	printf("Bytes:   Sent: %8u\tRecv: %8u\n", bytessent, bytesreceived);
+ 	printf("Packets: Sent: %8u\tRecv: %8u\n", packetssent, packetsreceived);
+ }
++#endif
+ 
+-/* Test function
++#ifdef NOTREQUIRED
++/* Test function 
+  * 1 - Add pinhole
+  * 2 - Check if pinhole is working from the IGD side */
+ static void SetPinholeAndTest(struct UPNPUrls * urls, struct IGDdatas * data,
+@@ -326,48 +346,34 @@
+ 	char uniqueID[8];
+ 	/*int isWorking = 0;*/
+ 	int r;
+-	char proto_tmp[8];
+ 
+ 	if(!intaddr || !remoteaddr || !iport || !eport || !proto || !lease_time)
+ 	{
+ 		fprintf(stderr, "Wrong arguments\n");
+ 		return;
+ 	}
+-	if(atoi(proto) == 0)
++	/*proto = protofix(proto);
++	if(!proto)
+ 	{
+-		const char * protocol;
+-		protocol = protofix(proto);
+-		if(protocol && (strcmp("TCP", protocol) == 0))
+-		{
+-			snprintf(proto_tmp, sizeof(proto_tmp), "%d", IPPROTO_TCP);
+-			proto = proto_tmp;
+-		}
+-		else if(protocol && (strcmp("UDP", protocol) == 0))
+-		{
+-			snprintf(proto_tmp, sizeof(proto_tmp), "%d", IPPROTO_UDP);
+-			proto = proto_tmp;
+-		}
+-		else
+-		{
+-			fprintf(stderr, "invalid protocol\n");
+-			return;
+-		}
+-	}
++		fprintf(stderr, "invalid protocol\n");
++		return;
++	}*/
+ 	r = UPNP_AddPinhole(urls->controlURL_6FC, data->IPv6FC.servicetype, remoteaddr, eport, intaddr, iport, proto, lease_time, uniqueID);
+ 	if(r!=UPNPCOMMAND_SUCCESS)
+ 		printf("AddPinhole([%s]:%s -> [%s]:%s) failed with code %d (%s)\n",
+-		       remoteaddr, eport, intaddr, iport, r, strupnperror(r));
++		       intaddr, iport, remoteaddr, eport, r, strupnperror(r));
+ 	else
+ 	{
+-		printf("AddPinhole: ([%s]:%s -> [%s]:%s) / Pinhole ID = %s\n",
+-		       remoteaddr, eport, intaddr, iport, uniqueID);
++		printf("AddPinhole: ([%s]:%s -> [%s]:%s) / Pinhole ID = %s\n", intaddr, iport, remoteaddr, eport, uniqueID);
+ 		/*r = UPNP_CheckPinholeWorking(urls->controlURL_6FC, data->servicetype_6FC, uniqueID, &isWorking);
+ 		if(r!=UPNPCOMMAND_SUCCESS)
+ 			printf("CheckPinholeWorking() failed with code %d (%s)\n", r, strupnperror(r));
+ 		printf("CheckPinholeWorking: Pinhole ID = %s / IsWorking = %s\n", uniqueID, (isWorking)? "Yes":"No");*/
+ 	}
+ }
++#endif
+ 
++#ifdef NOTREQUIRED
+ /* Test function
+  * 1 - Check if pinhole is working from the IGD side
+  * 2 - Update pinhole */
+@@ -467,8 +473,154 @@
+ 	r = UPNP_DeletePinhole(urls->controlURL_6FC, data->IPv6FC.servicetype, uniqueID);
+ 	printf("UPNP_DeletePinhole() returned : %d\n", r);
+ }
++#endif
++
++void XmlElemStart(void * d, const char * name, int l)
++{
++        struct XmlElement *data = (struct XmlElement *)d;
++        memcpy(data->tmp.TagName, name, l);
++        data->tmp.TagName[l] = '\0';
++        data->tmp.TagVal[0] = '\0';
++        data->level++;
++}
+ 
++void XmlElemEnd(void * d, const char * name, int l)
++{
++        struct XmlElement *data = (struct XmlElement *)d;
++        if (!strcmp(data->tmp.TagName, data->tTagName) && (data->level == data->tlevel)) {
++                strncpy(data->XmlElementData, data->tmp.TagVal, sizeof(data->XmlElementData));
++        }
++        data->tmp.TagName[0] = '\0';
++        data->tmp.TagVal[0] = '\0';
++        data->level--;
++}
++
++void XmlElemData(void *d, const char * data, int l)
++{
++        struct XmlElement *val = (struct XmlElement *)d;
++        memcpy(val->tmp.TagVal, data, l);
++        val->tmp.TagVal[l] = '\0';
++}
++
++int GetXmlTagVal(char *descXML, int descXMLsize, char *xmlTag, 
++                                int level, char *sVal)
++{
++	struct XmlElement data;
++	struct xmlparser parser;
++
++	if (descXML == NULL || xmlTag == NULL || sVal == NULL)
++		return -1;
+ 
++	bzero(&data, sizeof(struct XmlElement));
++	data.tlevel = level;
++	strcpy(data.tTagName, xmlTag);
++	parser.xmlstart = descXML;
++	parser.xmlsize = descXMLsize;
++	parser.data = &data;
++	parser.starteltfunc = XmlElemStart;
++	parser.endeltfunc = XmlElemEnd;
++	parser.datafunc = XmlElemData;
++	parser.attfunc = 0;
++	parsexml(&parser);
++
++	strcpy(sVal, data.XmlElementData);
++	return 0;
++}
++
++#define DEFAULT_LAN_IF	"br0"
++
++int main(int argc, char **argv)
++{
++	int ipv6 = 0, delay = 2, gwdevcnt = 0;
++	struct UPNPDev * devlist = 0;
++	int error = 0, retcode = 0;
++	FILE *fp = NULL;
++	char *interface = NULL, lanip[40];
++
++	for (;;) {
++		int c = getopt(argc, argv, "6i:d:");
++		if (c < 0) break;
++		switch(c) {
++			case '6':
++				ipv6 = 1;
++				break;
++			case 'i':
++				interface = optarg;
++				break;
++			case 'd':
++				delay = atoi(optarg);
++				break;
++			default:
++				fprintf(stderr, "\n"
++				        "usage: upnpc [-6] [-i <interface>] [-d <delay>]"
++				        "\n"
++				        " -6 enable IPv6\n"
++				        " -i interface name\n"
++				        " -d delay\n"
++				        "\n");
++				exit(-1);
++		}
++	}
++
++	if (interface == NULL)
++		interface = DEFAULT_LAN_IF;
++
++	if (getifaddr(interface, lanip, 40) == -1) {
++		fprintf(stderr, "Failed to determine LAN IP.\n");
++		exit(-2);
++	}
++
++#ifdef DEBUG
++	printf("interface: %s delay: %u ip address: %s\n", interface, delay, lanip);
++#endif
++
++	unlink("/tmp/UPnPDevInfo.txt");
++	fp = fopen("/tmp/UPnPDevInfo.txt", "w");
++	if (fp == NULL) {
++		fprintf(stderr, "Failed to open file %s\n", strerror(errno));
++		exit(-3);
++	}
++	if ((devlist = upnpDiscover(delay * 1000000, interface, NULL, 0, ipv6, &error))) {
++		struct UPNPDev * device;
++
++		for(device = devlist; device; device = device->pNext) {
++			char *descXML = NULL;
++			int descXMLsize = 0;
++			unsigned short port;
++			char * path;
++			char hostname[65];
++
++			if (!parseURL(device->descURL, hostname, &port, &path))
++				continue;
++
++			descXML = miniwget(device->descURL, &descXMLsize);
++			if (descXML) {
++				char fname[MINIUPNPC_URL_MAXSIZE], uuid[MINIUPNPC_URL_MAXSIZE];
++				GetXmlTagVal(descXML, descXMLsize, "modelDescription", 3, fname);
++				GetXmlTagVal(descXML, descXMLsize, "UDN", 3, uuid);
++
++				/* Fix for duplicate entry of the gateway */
++				if (!strcmp(hostname, lanip) && gwdevcnt++) {
++					free(descXML);
++					continue;
++				}
++
++				fprintf(fp, "%s\n%s\n%s\n\n", hostname, fname, uuid + strlen("uuid:"));
++				free(descXML);
++			}
++		}
++	} else {
++		fprintf(stderr, "No IGD UPnP Device found on the network [%s]!\n",interface);
++		retcode = 1;
++	}
++	fclose(fp);
++	if (devlist != NULL){
++	freeUPNPDevlist(devlist);			//ramesh memleak
++	}
++	return retcode;
++}
++
++#if 0
+ /* sample upnp client program */
+ int main(int argc, char ** argv)
+ {
+@@ -701,4 +853,5 @@
+ 	}
+ 	return retcode;
+ }
++#endif
+ 

@@ -1,0 +1,93 @@
+#!/bin/sh
+
+# Defines
+if [ ! "$MTLK_INIT_PLATFORM" ]; then			
+	. /tmp/mtlk_init_platform.sh
+fi
+
+print2log DBG "wave_wlan_start: args: $*"
+apIndex=$1
+
+timestamp "wave_wlan_start:$apIndex:begin"
+
+# Get corresponding wlan network interface from mapping file
+wlan=`find_wave_if_from_index $apIndex`
+
+# If wlan returned empty, the new index needs to be added to the mapping file.
+if [ "$wlan" = "" ]
+then
+	print2log DBG "wave_wlan_start: Adding $apIndex to mapping file"
+	# Update the mapping file describing the relation between cpeId and WLAN interface name.
+	. $ETC_PATH/wave_wlan_update_mapping add $apIndex
+	#update wlan interface from mapping file after it has been updated
+	wlan=`find_wave_if_from_index $apIndex`
+fi
+print2log DBG "wave_wlan_start: $apIndex is $wlan"
+
+# Read the objects containing needed parameters into a temp file and source it
+host_api get_all $$ $apIndex 'gen_bd_cfg|wlan_main|wlan_phy' > /tmp/start_params.sh
+. /tmp/start_params.sh
+
+# Check if AP or VAP to see if the AP/VAP is enabled
+if [ "$network_type" = "$AP" -o "$network_type" = "$VAP" ]
+then
+	if [ "$apEnable" = "$NO" ]
+	then
+		if [ "$network_type" = "$AP" ]
+		then
+			print2log ALERT "wave_wlan_start:Cannot set physical AP $wlan to be apEnable off, continue $wlan start"
+		else
+			print2log DBG "wave_wlan_start: VAP $wlan is not enabled"
+		fi
+	fi
+fi
+
+# Some scripts are called only for physical interfaces
+if [ "$network_type" = "$AP" -o "$network_type" = "$STA" ]
+then
+	(. $ETC_PATH/mtlk_init_rdlim.sh should_run $apIndex) && (. $ETC_PATH/mtlk_init_rdlim.sh start $apIndex)
+
+	# drvhlpr is up first (after rdlim for HW.ini) in order to get dumps in FW failure event.
+	# No drvhlpr kill is take place in wlan stop script, it is therefore done on start (if it is alive).
+	# It is for stop+start case, to make sure that the latest drvhlpr conf is taken.
+	(. $ETC_PATH/mtlk_drvhlpr.sh stop $apIndex)
+	(. $ETC_PATH/mtlk_drvhlpr.sh should_run $apIndex) && (. $ETC_PATH/mtlk_drvhlpr.sh create_config $apIndex) && (. $ETC_PATH/mtlk_drvhlpr.sh start $apIndex)
+fi
+
+# For VAPs
+if [ "$network_type" = "$VAP" ]
+then
+	(. $ETC_PATH/mtlk_init_mbss.sh should_run $apIndex) && (. $ETC_PATH/mtlk_init_mbss.sh create_config $apIndex) && (. $ETC_PATH/mtlk_init_mbss.sh start $apIndex)
+fi
+
+(. $ETC_PATH/mtlk_set_driver_params.sh should_run $apIndex) && (. $ETC_PATH/mtlk_set_driver_params.sh create_config $apIndex) && (. $ETC_PATH/mtlk_set_driver_params.sh start $apIndex)
+
+(. $ETC_PATH/mtlk_set_wls_if.sh should_run $apIndex) && (. $ETC_PATH/mtlk_set_wls_if.sh start $apIndex)
+# supplicant for STA and hostapd for APs.
+if [ "$network_type" = "$STA" ]
+then
+	NeverConnected=`host_api get $$ $apIndex NeverConnected`
+	if [ $NeverConnected = 0 ]
+	then
+		(. $ETC_PATH/mtlk_init_wpa_supplicant.sh should_run $apIndex) && (. $ETC_PATH/mtlk_init_wpa_supplicant.sh create_config $apIndex) && (. $ETC_PATH/mtlk_init_wpa_supplicant.sh start $apIndex)
+	fi
+else
+        echo "by pass mtlk_init_hostapd.sh"
+# Wish : reduce the booting time
+#	(. $ETC_PATH/mtlk_init_hostapd.sh should_run $apIndex) && (. $ETC_PATH/mtlk_init_hostapd.sh create_config $apIndex) && (. $ETC_PATH/mtlk_init_hostapd.sh start $apIndex)
+fi
+
+#(. $ETC_PATH/mtlk_wps_pbc.sh should_run $apIndex) && (. $ETC_PATH/mtlk_wps_pbc.sh create_config $apIndex) && (. $ETC_PATH/mtlk_wps_pbc.sh start $apIndex)
+
+# Check if start failure file exists.
+if [ -e /tmp/wave_${wlan}_start_failure ]
+then
+        cat /tmp/wave_${wlan}_start_failure
+        echo "$wlan failed:" >> $wave_start_failure
+        cat /tmp/wave_${wlan}_start_failure >> $wave_start_failure
+        rm /tmp/wave_${wlan}_start_failure
+fi
+
+print2log DBG "wave_wlan_start: end start of $wlan"
+
+timestamp "wave_wlan_start:$apIndex:done"

@@ -1,0 +1,96 @@
+menu "advanced configuration (for developers)"
+   depends on PACKAGE_ltq-voice-tapidemo
+
+config LTQ_VOICE_TAPIDEMO_USER_FLAGS
+        depends on PACKAGE_ltq-voice-tapidemo
+        string "Additional CFLAGS"
+        default ""
+        help
+                Additional CFLAGS for compilation (for developers)
+
+config LTQ_VOICE_TAPIDEMO_USER_OPTIONS
+        depends on PACKAGE_ltq-voice-tapidemo
+        string "Additional autogen configure options"
+        default ""
+        help
+                Additional autogen configure options (for developers)
+endmenu
+
+choice
+   prompt "board selection"
+   depends on PACKAGE_ltq-voice-tapidemo
+   default LTQ_VOICE_TAPIDEMO_BOARD_EASY508xx     if (                                                TARGET_ltqcpe_ar9  || TARGET_ltqcpe_platform_ar9 || TARGET_ifxcpe_platform_ar9)
+   default LTQ_VOICE_TAPIDEMO_BOARD_EASY80910     if (TARGET_lantiq_xrx200 ||                         TARGET_ltqcpe_vr9  || TARGET_ltqcpe_platform_vr9 || TARGET_ifxcpe_platform_vr9)
+   default LTQ_VOICE_TAPIDEMO_BOARD_XWAY_XRX300   if (TARGET_lantiq_xrx300 || TARGET_lantiq_xrx330 || TARGET_ltqcpe_ar10 || TARGET_ltqcpe_platform_ar10)
+   default LTQ_VOICE_TAPIDEMO_BOARD_EASY80910
+   help
+      Select the target platform.
+
+   config LTQ_VOICE_TAPIDEMO_BOARD_EASY508xx
+      bool "XWAY(TM) XRX100 Reference Board"
+
+   config LTQ_VOICE_TAPIDEMO_BOARD_EASY80910
+      bool "XWAY(TM) XRX200 Reference Board"
+
+   config LTQ_VOICE_TAPIDEMO_BOARD_XWAY_XRX300
+      bool "XWAY(TM) XRX300 Family Board / EASY389 BOND Reference Board"
+endchoice
+
+config LTQ_VOICE_TAPIDEMO_QOS
+	bool "enable QOS support"
+	depends on PACKAGE_ltq-voice-tapidemo
+	default y
+	help
+		Option to enable the KPI2UDP RTP packet acceleration path
+		(highly recommended for VoIP).
+
+config  LTQ_VOICE_TAPIDEMO_FAX_MODEM
+	bool "enable fax/modem transparent support"
+	depends on PACKAGE_ltq-voice-tapidemo
+	default y if LTQ_VOICE_TAPIDEMO_FAX_T_38_FW
+	default n
+	help
+		Enable fax/modem transparent support.
+
+config  LTQ_VOICE_TAPIDEMO_FAX_T_38_FW
+	bool "enable T.38 fax relay"
+	depends on PACKAGE_ltq-voice-tapidemo
+	default y
+	help
+		Enable T.38 fax relay demo,
+		when enabled then fax/modem transparent support is also enabled.
+
+config  LTQ_VOICE_TAPIDEMO_DXT_EXT
+	bool "enable DUSLIC-xT extension board support"
+	depends on PACKAGE_ltq-voice-tapidemo
+	depends on PACKAGE_ltq-voice-duslic_xt
+	default y
+	help
+		enable DUSLIC-xT extension board support
+
+config  LTQ_VOICE_TAPIDEMO_DECT
+	bool "enable DECT support"
+	depends on PACKAGE_ltq-voice-tapidemo
+	depends on PACKAGE_ifx-dect
+	default y
+	help
+		enable DECT support.
+
+config LTQ_VOICE_TAPIDEMO_COUNTRY_LIBRARY
+	bool "TAPI Country library support"
+	depends on PACKAGE_ltq-voice-tapidemo
+	select PACKAGE_ltq-voice-tapi-lib-country
+	default n
+	help
+		Option to build country library support into tapidemo.
+
+config LTQ_VOICE_TAPIDEMO_EVENT_LOGGER
+	depends on PACKAGE_ltq-voice-tapidemo
+	depends on +PACKAGE_ltq-evtlog
+	bool "event logger support"
+	default y
+	help
+		Option to send traces from Tapidemo to Event Logger
+		- for debugging only
+		- requires package ltq-evtlog
+

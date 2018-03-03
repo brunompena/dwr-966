@@ -1,0 +1,54 @@
+#! /bin/sh
+
+NATENABLE=`sqlite3 -cmd ".timeout 1000" /tmp/system.db "select Enable from FirewallNatConfig;"`
+
+if [ "$NATENABLE" = "5" ]; then 
+	return
+fi
+
+rm /tmp/connectipv6dev
+touch /tmp/connectipv6dev
+
+WAN_PREFIX=`grep 'prefix addr ' /tmp/dhcppd_result | sed 's/^.*addr //g' | sed 's/:://g' | sed 's/:0:0:/::/g'`
+
+# write list to connectipv6dev
+ip -6 neigh show | grep "lladdr" | grep $WAN_PREFIX | while read line
+do
+	ipv6=`echo $line | sed 's/ dev.*$//g'`
+	mac=`echo $line | sed 's/^.*addr //g' | sed 's/ .*$//g'`
+	
+	# match wifi0
+	iwlist wlan0 peers | grep -v wlan0 | tr A-Y a-y | grep "$mac"
+	if [ $? == 0 ];then
+		from="WIFI1"
+	else
+		# for wifi AC
+		wlanconfig ath0 list station | tr A-Y a-y | grep "$mac"
+		if [ $? == 0 ];then
+			from="WIFI3"
+		else
+			from="LAN"
+		fi
+	fi
+	
+	dumpleases -f /var/lib/misc/udhcpd.leases | grep "$mac"
+	if [ $? == 0 ];then
+		devname=`dumpleases -f /var/lib/misc/udhcpd.leases | grep $mac | awk '{print "" $3}'`
+			
+		# for empty hostname
+		echo $devname | grep ":"
+		if [ $? == 0 ];then
+			devname="(null)"
+		else
+			# for empty hostname && expired
+			echo $devname | grep "expired"
+			if [ $? == 0 ];then
+				devname="(null)"
+			fi
+		fi
+	else
+		devname="(null)"
+	fi
+		
+	echo "$ipv6 $mac $from $devname" >> /tmp/connectipv6dev
+done 

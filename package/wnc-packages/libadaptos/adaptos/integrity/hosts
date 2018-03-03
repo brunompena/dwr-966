@@ -1,0 +1,5 @@
+# this file is similar the /etc/hosts file on UNIX systems
+# it maps know hostnames to ip addresses and can be used in environments
+# where these names cannot be resolved using DNS. Ths mapping can also be
+# for reverse DNS lookup to get the name corresponding to an ip address.
+localhost 127.0.0.1

@@ -1,0 +1,32 @@
+diff -Naur iptables-1.4.6.orig/extensions/libipt_REJECT.c iptables-1.4.6/extensions/libipt_REJECT.c
+===================================================================
+--- iptables-1.4.6.orig/extensions/libipt_REJECT.c	
++++ iptables-1.4.6/extensions/libipt_REJECT.c
+@@ -46,7 +46,11 @@
+ 	{"tcp-reset", "tcp-rst",
+ 	 IPT_TCP_RESET, "TCP RST packet"},
+ 	{"icmp-admin-prohibited", "admin-prohib",
+-	 IPT_ICMP_ADMIN_PROHIBITED, "ICMP administratively prohibited (*)"}
++	 IPT_ICMP_ADMIN_PROHIBITED, "ICMP administratively prohibited (*)"},
++	{"web-block", "Web Block",
++	 IPT_WEB_BLOCK, "WEB Block"},
++	{"web-redirect", "Web Redirect",
++	 IPT_WEB_REDIRECT, "WEB Redirect"}
+ };
+ 
+ static void
+diff -Naur iptables-1.4.6.orig/include/linux/netfilter_ipv4/ipt_REJECT.h iptables-1.4.6/include/linux/netfilter_ipv4/ipt_REJECT.h
+===================================================================
+--- iptables-1.4.6.orig/include/linux/netfilter_ipv4/ipt_REJECT.h
++++ iptables-1.4.6/include/linux/netfilter_ipv4/ipt_REJECT.h
+@@ -10,7 +10,9 @@
+ 	IPT_ICMP_NET_PROHIBITED,
+ 	IPT_ICMP_HOST_PROHIBITED,
+ 	IPT_TCP_RESET,
+-	IPT_ICMP_ADMIN_PROHIBITED
++	IPT_ICMP_ADMIN_PROHIBITED,
++	IPT_WEB_BLOCK,
++	IPT_WEB_REDIRECT
+ };
+ 
+ struct ipt_reject_info {

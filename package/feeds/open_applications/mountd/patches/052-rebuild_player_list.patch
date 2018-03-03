@@ -1,0 +1,22 @@
+--- mountd-0.1_org/lib/mount.c	2015-02-16 15:25:05.382819391 +0800
++++ mountd-0.1/lib/mount.c	2015-02-16 15:28:03.310818575 +0800
+@@ -165,7 +165,8 @@
+ 		snprintf(tmp2, 64, "../.run/mountd/%s", dev); /* Use releative symlink for anonymous ftp to access */
+ 		symlink(tmp2, tmp);
+ 		mount_new("/mnt/usb/.run/mountd/", dev);
+-		system_printf("/etc/init.d/ltq_mediaserver_ctl.sh");
++		//system_printf("/etc/init.d/ltq_mediaserver_ctl.sh");
++		system_printf("/usr/local/bin/rebuild_playlist.sh");
+ 	}
+ }
+ 
+@@ -590,7 +591,8 @@
+ 			mount_dump_uci_state();
+ 		}
+ 	}
+-	system_printf("/etc/init.d/ltq_mediaserver_ctl.sh");
++	//system_printf("/etc/init.d/ltq_mediaserver_ctl.sh");
++	system_printf("/usr/local/bin/rebuild_playlist.sh");
+ }
+ 
+ void mount_dump_list(void)

@@ -1,0 +1,20 @@
+#!/bin/sh /etc/rc.common
+
+#START=16
+
+start() {
+	insmod /lib/modules/3.10.12/ip6_tables.ko
+	#insmod /lib/modules/3.10.12/ip6_tunnel.ko
+	insmod /lib/modules/3.10.12/ip6t_REJECT.ko
+	#insmod /lib/modules/3.10.12/ip6t_eui64.ko
+	#insmod /lib/modules/3.10.12/ip6t_frag.ko
+	#insmod /lib/modules/3.10.12/ip6t_hbh.ko
+	insmod /lib/modules/3.10.12/ip6t_ipv6header.ko
+	#insmod /lib/modules/3.10.12/ip6t_mh.ko
+	#insmod /lib/modules/3.10.12/ip6t_rt.ko
+	insmod /lib/modules/3.10.12/ip6table_filter.ko
+	insmod /lib/modules/3.10.12/ip6table_mangle.ko
+	insmod /lib/modules/3.10.12/xt_hl.ko
+
+	/usr/local/bin/firewall_ipv6.sh init &
+}

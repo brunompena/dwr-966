@@ -1,0 +1,74 @@
+Last modify: 2000.2.9
+Author: Sh Yunchen (rock@bbs.isu.edu.tw)	1999.3.31
+
+Calculates the MD5 hash of string using the 
+RSA Data Security, Inc. MD5 Message-Digest Algorithm.
+
+[chinese-big5]
+
+在原本的 Makefile 中，只是產生一個名叫 md5 的工具，並不是產生一個
+ archive (static library)，為了方便在C/C++語言程式中，引用這裡的
+ MD5 函數，因此我修改了 Makefile ，增加了兩個 label ，以產生
+ archive 並安裝到指定目錄。
+
+建立: make archive
+安裝: make install
+
+Archive 檔名: libmd5.a
+
+Q: 安裝到什麼地方?
+A: Archive: $PREFIX/lib
+   Header files: $PREFIX/include/md5
+
+   PREFIX 的預設值為: /usr
+
+Q: 如何在C/C++語言程式中引用 md5c.c 中的函數?
+A: 你可以閱讀原本的 mddriver.c ，如果你覺得太複雜，也可以閱讀我所
+   提供的 md5_example.c 。
+   基本上，你必須要引入一個 header files: md5.h 即可，
+   在編譯程式時，則須告知 linker 將 libmd5.a 連結進來，通常是為 cc 或 gcc 
+   加上參數 -lmd5 。
+
+[english]
+
+This is not a part of The TIP Project.
+
+I add two labels to create a archive and install.
+
+Create : make archive
+Install: make install
+
+The name of archive: libmd5.a
+
+Q: Where did they install to?
+A: Archive: $PREFIX/lib
+   Header files: $PREFIX/include/md5
+
+Q: How to use the routines of md5c.c in my C/C++ source?
+A: You may read mddriver.c. Or you may read md5_example.c provided by me.
+   Basis, you need include two header files, md5/global.h and md5/md5.h.
+   Also you should tell the linker to link libmd5.a. Usually add this
+   parament, -lmd5, for cc or gcc.
+
+
+/* Copyright (C) 1991-2, RSA Data Security, Inc. Created 1991. All
+rights reserved.
+
+License to copy and use this software is granted provided that it
+is identified as the "RSA Data Security, Inc. MD5 Message-Digest
+Algorithm" in all material mentioning or referencing this software
+or this function.
+
+License is also granted to make and use derivative works provided
+that such works are identified as "derived from the RSA Data
+Security, Inc. MD5 Message-Digest Algorithm" in all material
+mentioning or referencing the derived work.
+
+RSA Data Security, Inc. makes no representations concerning either
+the merchantability of this software or the suitability of this
+software for any particular purpose. It is provided "as is"
+without express or implied warranty of any kind.
+
+These notices must be retained in any copies of any part of this
+documentation and/or software.
+ */

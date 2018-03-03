@@ -1,0 +1,20 @@
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "lantiq,xway", "lantiq,grx500";
+
+	cpus {
+		cpu@0 {
+			compatible = "mips,InterAptiv";
+		};
+		cpu@1 {
+			compatible = "mips,InterAptiv";
+		};
+		cpu@2 {
+			compatible = "mips,InterAptiv";
+		};
+		cpu@3 {
+			compatible = "mips,InterAptiv";
+		};
+	};
+};

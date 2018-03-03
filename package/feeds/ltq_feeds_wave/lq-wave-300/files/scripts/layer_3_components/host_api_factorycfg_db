@@ -1,0 +1,76 @@
+#!/bin/sh
+
+####################################
+#ARX388
+#
+ARX388_NUMBER_ETHWAN_PARAMS="1 2 3 4 5 6 7"
+
+#params:
+ARX388_ETHWAN_PARAM_1="wan_phy_cfg wanphy_tc  0"
+ARX388_ETHWAN_PARAM_2="wan_phy_cfg wanphy_phymode  2"
+ARX388_ETHWAN_PARAM_3="wan_phy_cfg wanphy_settc  0"
+ARX388_ETHWAN_PARAM_4="wan_phy_cfg wanphy_setphymode  2"
+ARX388_ETHWAN_PARAM_5="default_wan_iface default_wan_conn_connName  WANPPP0"
+ARX388_ETHWAN_PARAM_6="default_wan_iface default_wan_conn_confconnName  WANPPP0"
+ARX388_ETHWAN_PARAM_7="default_wan_iface default_wan_conn_iface  ppp0"
+
+####################################
+#GRX288
+#
+GRX288_NUMBER_ETHWAN_PARAMS="1 2 3 4 5 6 7 8"
+
+#params:
+GRX288_ETHWAN_PARAM_1="wan_phy_cfg wanphy_tc  0"
+GRX288_ETHWAN_PARAM_2="wan_phy_cfg wanphy_phymode  2"
+GRX288_ETHWAN_PARAM_3="wan_phy_cfg wanphy_settc  0"
+GRX288_ETHWAN_PARAM_4="wan_phy_cfg wanphy_setphymode  2"
+GRX288_ETHWAN_PARAM_5="default_wan_iface default_wan_conn_connName  WANPPP1"
+GRX288_ETHWAN_PARAM_6="default_wan_iface default_wan_conn_confconnName  WANPPP1"
+GRX288_ETHWAN_PARAM_7="qos_queuemgmt qm_upPortRateLim 100000"
+GRX288_ETHWAN_PARAM_8="default_wan_iface default_wan_conn_iface  ppp3"
+
+####################################
+#ARX168
+#
+ARX168_NUMBER_ETHWAN_PARAMS="1 2 3 4 5 6 7 8"
+
+#params:
+ARX168_ETHWAN_PARAM_1="wan_phy_cfg wanphy_tc  0"
+ARX168_ETHWAN_PARAM_2="wan_phy_cfg wanphy_phymode  2"
+ARX168_ETHWAN_PARAM_3="wan_phy_cfg wanphy_settc  0"
+ARX168_ETHWAN_PARAM_4="wan_phy_cfg wanphy_setphymode  2"
+ARX168_ETHWAN_PARAM_5="default_wan_iface default_wan_conn_connName  WANPPP1"
+ARX168_ETHWAN_PARAM_6="default_wan_iface default_wan_conn_confconnName  WANPPP1"
+ARX168_ETHWAN_PARAM_7="qos_queuemgmt qm_upPortRateLim 100000"
+ARX168_ETHWAN_PARAM_8="default_wan_iface default_wan_conn_iface  ppp1"
+
+####################################
+#VRX288
+#
+VRX288_NUMBER_ETHWAN_PARAMS="1 2 3 4 5 6 7 8"
+
+#params:
+VRX288_ETHWAN_PARAM_1="wan_phy_cfg wanphy_tc  0"
+VRX288_ETHWAN_PARAM_2="wan_phy_cfg wanphy_phymode  2"
+VRX288_ETHWAN_PARAM_3="wan_phy_cfg wanphy_settc  0"
+VRX288_ETHWAN_PARAM_4="wan_phy_cfg wanphy_setphymode  2"
+VRX288_ETHWAN_PARAM_5="default_wan_iface default_wan_conn_connName  WANPPP1"
+VRX288_ETHWAN_PARAM_6="default_wan_iface default_wan_conn_confconnName  WANPPP1"
+VRX288_ETHWAN_PARAM_7="qos_queuemgmt qm_upPortRateLim 100000"
+VRX288_ETHWAN_PARAM_8="default_wan_iface default_wan_conn_iface  ppp2"
+
+####################################
+#ARX362
+#
+ARX362_NUMBER_ETHWAN_PARAMS="1 2 3 4 5 6 7 8 0"
+
+#params:
+ARX362_ETHWAN_PARAM_1="wan_phy_cfg wanphy_tc  0"
+ARX362_ETHWAN_PARAM_2="wan_phy_cfg wanphy_phymode  2"
+ARX362_ETHWAN_PARAM_3="wan_phy_cfg wanphy_settc  0"
+ARX362_ETHWAN_PARAM_4="wan_phy_cfg wanphy_setphymode  2"
+ARX362_ETHWAN_PARAM_5="default_wan_iface default_wan_conn_connName  WANIP0"
+ARX362_ETHWAN_PARAM_6="default_wan_iface default_wan_conn_confconnName  WANIP0"
+ARX362_ETHWAN_PARAM_7="qos_queuemgmt qm_upPortRateLim 10000"
+ARX362_ETHWAN_PARAM_8="default_wan_iface default_wan_conn_iface  nas0"
+ARX362_ETHWAN_PARAM_9="qos_queuemgmt qm_upPortRateLim 10000"

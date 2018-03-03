@@ -1,0 +1,59 @@
+# GCT GDM724x LTE driver configuration
+#
+
+menuconfig LTE_GDM724X
+	tristate "GCT GDM724x LTE support"
+	depends on NET
+	help
+	  Support for the GCT GDM724x LTE chip
+
+if LTE_GDM724X
+
+choice
+	prompt "Select interface"
+	
+config LTE_GDM724X_USB
+	bool "USB"
+	depends on USB
+
+config LTE_GDM724X_SDIO
+	bool "SDIO"
+	depends on MMC
+
+endchoice
+
+if LTE_GDM724X_SDIO
+
+config LTE_GDM724X_SDIO_BOOT
+	bool "Enable SDIO boot"
+	default y
+
+config LTE_GDM724X_SDIO_AT_COMMAND_EXTENDED
+	bool "Enable SDIO at command extended"
+	default y
+
+config LTE_GDM724X_SDIO_DEVICE_STATUS_CHECK
+	bool "Enable SDIO status check"
+	default n
+
+config LTE_GDM724X_SDIO_MODEM_PORT
+	bool "Enable SDIO modem port"
+	default y
+
+endif # LTE_GDM724X_SDIO
+
+
+config LTE_GDM724X_TX_DELAY
+	bool "Enable TX DELAY"
+	default n
+
+config LTE_GDM724X_NV_HOST
+	bool "Enable NV from Host"
+	default n
+
+config LTE_GDM724X_RX_FLOW_CONTROL
+	bool "Enable RX Flow Control"
+	default n
+
+endif # LTE_GDM724X
+

@@ -1,0 +1,27 @@
+Index: busybox-1.17.1/networking/udhcp/dhcpd.c
+--- busybox-1.17.1.orig/networking/udhcp/dhcpd.c	2014-10-14 12:15:17.516337200 +0800
++++ busybox-1.17.1/networking/udhcp/dhcpd.c	2014-10-22 11:00:10.322123900 +0800
+@@ -225,9 +225,23 @@
+ 			/* We have a dynamic lease for client's chaddr.
+ 			 * Reuse its IP (even if lease is expired).
+ 			 * Note that we ignore requested IP in this case.
++			 * GARYeh 20140126: Workaround for windows 7.
++			 *	if requested IP is the same as lease IP in DHCP discover, 
++			 *	we allocate new IP in this case.  
+ 			 */
++			if ((req_ip_opt = udhcp_get_option(oldpacket, DHCP_REQUESTED_IP)) != NULL
++			/* (read IP) */
++			&& (move_from_unaligned32(req_nip, req_ip_opt), 1)
++			&& ntohl(req_nip) == lease->lease_nip
++			){
++				bb_info_msg("Sending new OFFER with DHCP_REQUESTED_IP");
++				packet.yiaddr = find_free_or_expired_nip(oldpacket->chaddr);
++			}
++			else
++			{
+ 			packet.yiaddr = lease->lease_nip;
+ 		}
++		}
+ 		/* Or: if client has requested an IP */
+ 		else if ((req_ip_opt = udhcp_get_option(oldpacket, DHCP_REQUESTED_IP)) != NULL
+ 		 /* (read IP) */

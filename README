@@ -1,3 +1,43 @@
+### Build Instructions (Updated July 2025)
+
+1. Download and install Ubuntu Server 12.04.5 (i386) on a VM: https://old-releases.ubuntu.com/releases/12.04.5/ubuntu-12.04.5-server-i386.iso
+
+2. Update the APT sources to use the Ubuntu old releases repository:
+
+   sudo sed -ri 's|^(deb(-src)?) (https?)://[^/]+/|\1 \3://old-releases.ubuntu.com/|g' /etc/apt/sources.list
+
+3. Install the required build dependencies:
+
+   sudo apt-get update
+
+   sudo apt-get install -y openssh-server vim git git-core curl g++ autoconf subversion bison libncurses5-dev zlib1g-dev gettext unzip
+   sudo apt-get install -y build-essential=11.5ubuntu2 flex=2.5.35-10ubuntu3 scsh-common-0.6=0.6.7-8
+
+   wget http://old-releases.ubuntu.com/ubuntu/pool/main/libs/libsigsegv/libsigsegv2_2.9-4ubuntu3_i386.deb
+   wget http://old-releases.ubuntu.com/ubuntu/pool/main/g/gawk/gawk_4.0.1+dfsg-2_i386.deb
+
+   sudo dpkg -i libsigsegv2_2.9-4ubuntu3_i386.deb
+   sudo dpkg -i gawk_4.0.1+dfsg-2_i386.deb
+
+   rm libsigsegv2_2.9-4ubuntu3_i386.deb
+   rm gawk_4.0.1+dfsg-2_i386.deb
+
+4. Clone this repository:
+
+   git clone https://github.com/brunompena/dwr-966
+
+5. Build the image file
+
+   cd dwr-966
+   cp target/linux/lantiq/files/drivers/net/lantiq_ppa/ppa_api/ppa_api_sw_accel.o kernel/drivers/net/lantiq_ppa/ppa_api/
+   ./scripts/ltq_change_environment.sh switch ./config/P02003
+   make -j$(nproc)
+
+6. Image file location: ./bin/lantiq/P02003/fullimage.img
+
+
+### Build Instructions (D-Link Original)
+
 0. Introduction
 	This file will show you how to build the GPL linux system.
 
@@ -56,4 +96,3 @@ Step3. Build code command
 		3.2 $ make V=s (for detail compile information)
 		3.3 $ make V=s > compile.log  (if you want to record the compile log)
 	4. After make successfully, you will find the image file in ./bin/lantiq/P02003, the file name should be fullimage.img
-		
